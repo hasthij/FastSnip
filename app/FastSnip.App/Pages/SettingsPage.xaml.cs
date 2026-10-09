@@ -24,11 +24,16 @@ public sealed partial class SettingsPage : Page
     {
         InitializeComponent();
         NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
+        if (App.Window != null)
+            App.Window.Activated += (_, e) =>
+            {
+                if (e.WindowActivationState != WindowActivationState.Deactivated && _didLoad) UpdateMicWarning();
+            };
         Loaded += async (_, _) =>
         {
             if (_didLoad)
             {
-                MicBlocked.IsOpen = Mic.IsOn && MicAccess.Blocked();
+                UpdateMicWarning();
                 return;
             }
             _didLoad = true;
@@ -67,7 +72,7 @@ public sealed partial class SettingsPage : Page
         Select(Fps, ((long)C.GetNumber("recording", "fps", 60)).ToString());
         Select(Quality, C.GetString("recording", "quality", "high"));
         Mic.IsOn = C.GetBool("recording", "microphone", true);
-        MicBlocked.IsOpen = Mic.IsOn && MicAccess.Blocked();
+        UpdateMicWarning();
         SysAudio.IsOn = C.GetBool("recording", "system_audio", true);
         Cursor.IsOn = C.GetBool("recording", "show_cursor", true);
         Select(Countdown, ((long)C.GetNumber("recording", "countdown", 3)).ToString());
@@ -151,13 +156,35 @@ public sealed partial class SettingsPage : Page
         Save();
     }
 
+    private DispatcherTimer? _micTimer;
+
+    /// Show or hide the mic warning, and keep checking while it's up so it
+    /// goes away as soon as access is allowed in Windows Settings.
+    private void UpdateMicWarning()
+    {
+        MicBlocked.IsOpen = Mic.IsOn && MicAccess.Blocked();
+        if (MicBlocked.IsOpen)
+        {
+            if (_micTimer == null)
+            {
+                _micTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1.5) };
+                _micTimer.Tick += (_, _) => UpdateMicWarning();
+            }
+            _micTimer.Start();
+        }
+        else
+        {
+            _micTimer?.Stop();
+        }
+    }
+
     private async void MicSettings_Click(object sender, RoutedEventArgs e) => await MicAccess.OpenSettingsAsync();
 
     private async void Rec_Toggled(object sender, RoutedEventArgs e)
     {
         if (_loading) return;
         if (sender == Mic && Mic.IsOn) await MicAccess.RequestAsync();
-        MicBlocked.IsOpen = Mic.IsOn && MicAccess.Blocked();
+        UpdateMicWarning();
         C.Set("recording", "microphone", Mic.IsOn);
         C.Set("recording", "system_audio", SysAudio.IsOn);
         C.Set("recording", "show_cursor", Cursor.IsOn);
