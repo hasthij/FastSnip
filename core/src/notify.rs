@@ -35,6 +35,7 @@ pub const WM_TEXT_COPIED: u32 = WM_APP + 6;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Act {
+    OpenLink,
     Edit,
     CopyText,
     Folder,
@@ -45,6 +46,8 @@ enum Kind {
     Shot,
     Video { seconds: f64 },
     Message,
+    /// A permission Windows is blocking; clicking opens the right Settings page.
+    Permission { link: String, hint: String },
 }
 
 struct Toast {
@@ -107,7 +110,26 @@ pub fn screenshot_saved(img: std::sync::Arc<Image>, path: &Path) {
     show(Kind::Shot, "Copied and saved".into(), Some(path.to_path_buf()), Some(img));
 }
 
+/// "Turn on microphone access" toast. Clicking it opens Settings > Privacy > Microphone.
+pub fn mic_permission(saved: bool) {
+    let title = if saved { "Saved without your mic" } else { "Turn on microphone access" };
+    show(
+        Kind::Permission {
+            link: "ms-settings:privacy-microphone".into(),
+            hint: "Windows is blocking FastSnip's mic. Click to allow it".into(),
+        },
+        title.into(),
+        None,
+        None,
+    );
+}
+
 pub fn recording_saved(d: &recorder::Done) {
+    if d.mic_blocked && d.error.is_none() {
+        // Say it plainly instead of leaving a silent mic track to be discovered later.
+        mic_permission(true);
+        return;
+    }
     match (&d.path, &d.error) {
         (Some(p), None) => show(Kind::Video { seconds: d.seconds }, "Recording saved to folder".into(), Some(p.clone()), None),
         (_, Some(e)) if e != "cancelled" => show(Kind::Message, format!("Recording failed: {e}"), None, None),
@@ -125,7 +147,7 @@ pub fn message(text: &str) {
 
 fn show(kind: Kind, title: String, path: Option<PathBuf>, image: Option<std::sync::Arc<Image>>) {
     with(|n| {
-        if !n.enabled && !matches!(kind, Kind::Message) {
+        if !n.enabled && matches!(kind, Kind::Shot | Kind::Video { .. }) {
             return;
         }
         if let Some(t) = n.toast.take() {
@@ -176,6 +198,7 @@ fn show(kind: Kind, title: String, path: Option<PathBuf>, image: Option<std::syn
             Some(img) => (g.bitmap(img.bgra.as_ptr(), img.w, img.h, img.w * 4).ok(), (img.w, img.h)),
             None => (None, (0, 0)),
         };
+        let long = matches!(kind, Kind::Permission { .. });
         n.toast = Some(Toast {
             hwnd,
             surf,
@@ -185,7 +208,7 @@ fn show(kind: Kind, title: String, path: Option<PathBuf>, image: Option<std::syn
             thumb,
             thumb_size,
             image,
-            left: SHOW_FOR,
+            left: if long { SHOW_FOR * 2 } else { SHOW_FOR },
             last: Instant::now(),
             hover: None,
             hovering: false,
@@ -204,13 +227,14 @@ fn actions(kind: &Kind) -> Vec<(Act, &'static str)> {
         Kind::Shot => vec![(Act::Edit, "pen-line"), (Act::CopyText, "scan-text"), (Act::Folder, "folder-open"), (Act::Delete, "trash-2")],
         Kind::Video { .. } => vec![(Act::Edit, "scissors"), (Act::Folder, "folder-open"), (Act::Delete, "trash-2")],
         Kind::Message => vec![],
+        Kind::Permission { .. } => vec![(Act::OpenLink, "link")],
     }
 }
 
 fn layout(t: &Toast) -> (D2D_RECT_F, Vec<(Act, &'static str, D2D_RECT_F)>) {
     let s = t.scale;
     let thumb = rf(12.0 * s, 12.0 * s, 92.0 * s, 62.0 * s);
-    let x0 = if matches!(t.kind, Kind::Message) { 16.0 * s } else { 116.0 * s };
+    let x0 = if matches!(t.kind, Kind::Shot | Kind::Video { .. }) { 116.0 * s } else { 16.0 * s };
     let btns = actions(&t.kind)
         .into_iter()
         .enumerate()
@@ -231,8 +255,8 @@ fn draw(n: &mut Notify) {
     g.fill(rf(0.0, 0.0, w, h), p.bar);
     g.stroke_round(rf(0.5, 0.5, w - 1.0, h - 1.0), 12.0 * s, p.bar_line, 1.0);
     let (thumb, btns) = layout(t);
-    let x0 = if matches!(t.kind, Kind::Message) { 16.0 * s } else { 116.0 * s };
-    if !matches!(t.kind, Kind::Message) {
+    let x0 = if matches!(t.kind, Kind::Shot | Kind::Video { .. }) { 116.0 * s } else { 16.0 * s };
+    if matches!(t.kind, Kind::Shot | Kind::Video { .. }) {
         g.fill_round(thumb, 6.0 * s, p.hover);
         if let Some(bmp) = &t.thumb {
             // Fit the image inside the thumbnail box.
@@ -254,7 +278,13 @@ fn draw(n: &mut Notify) {
     }
     let bold = g.fonts(s).label_bold.clone();
     let mono = g.fonts(s).key.clone();
-    g.icon("circle-check", x0, 13.0 * s, 15.0 * s, theme::rgb(if p.dark { 0x5fd08f } else { 0x1d8a4e }));
+    if let Kind::Permission { hint, .. } = &t.kind {
+        g.icon("mic-off", x0, 13.0 * s, 15.0 * s, theme::rgb(if p.dark { 0xf2c169 } else { 0x9a5b00 }));
+        let small = g.fonts(s).label.clone();
+        g.text(hint, &small, x0, 32.0 * s, p.muted);
+    } else {
+        g.icon("circle-check", x0, 13.0 * s, 15.0 * s, theme::rgb(if p.dark { 0x5fd08f } else { 0x1d8a4e }));
+    }
     g.text(&t.title, &bold, x0 + 21.0 * s, 11.0 * s, p.fg);
     if let Some(path) = &t.path {
         let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
@@ -286,7 +316,7 @@ fn hit(x: i32, y: i32) -> (Option<Act>, bool) {
         let (fx, fy) = (x as f32, y as f32);
         let inside = |r: &D2D_RECT_F| fx >= r.left && fx < r.right && fy >= r.top && fy < r.bottom;
         let act = btns.iter().find(|(_, _, r)| inside(r)).map(|(a, _, _)| *a);
-        (act, !matches!(t.kind, Kind::Message) && inside(&thumb))
+        (act, matches!(t.kind, Kind::Shot | Kind::Video { .. }) && inside(&thumb))
     })
     .unwrap_or((None, false))
 }
@@ -305,6 +335,17 @@ fn run(a: Act) {
     let info = with(|n| n.toast.as_ref().map(|t| (t.path.clone(), t.image.clone(), n.main))).flatten();
     let Some((path, image, main)) = info else { return };
     match a {
+        Act::OpenLink => {
+            let link = with(|n| match n.toast.as_ref().map(|t| &t.kind) {
+                Some(Kind::Permission { link, .. }) => Some(link.clone()),
+                _ => None,
+            })
+            .flatten();
+            if let Some(l) = link {
+                let _ = std::process::Command::new("explorer.exe").arg(l).spawn();
+            }
+            close();
+        }
         Act::Edit => {
             if let Some(p) = &path {
                 crate::overlay::open_app_with(&["--edit", &p.to_string_lossy()]);
@@ -414,7 +455,11 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
             match hit(x, y) {
                 (Some(a), _) => run(a),
                 (None, true) => run(Act::Edit),
-                _ => {}
+                _ => {
+                    if with(|n| matches!(n.toast.as_ref().map(|t| &t.kind), Some(Kind::Permission { .. }))).unwrap_or(false) {
+                        run(Act::OpenLink);
+                    }
+                }
             }
             LRESULT(0)
         }

@@ -27,6 +27,7 @@ features = [
     "Globalization",
     "Graphics_Imaging",
     "Media_Ocr",
+    "Security_Authorization_AppCapabilityAccess",
     "Storage_Streams",
     "Win32_Foundation",
     "Win32_Graphics_Direct2D",

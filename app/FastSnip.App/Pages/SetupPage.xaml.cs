@@ -129,6 +129,8 @@ public sealed partial class SetupPage : Page
         {
             C.Set("", "background", BgDemand.IsChecked == true ? "on-demand" : "tray");
             await Startup.SetAsync(StartWithWindows.IsChecked == true);
+            // Ask for the microphone now, so the first recording isn't silent.
+            await MicAccess.RequestAsync();
         }
         if (_step < 4)
         {

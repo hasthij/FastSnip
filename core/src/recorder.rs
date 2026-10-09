@@ -58,6 +58,7 @@ pub struct Control {
     pub live: AtomicBool,
     pub paused: AtomicBool,
     pub mic_muted: AtomicBool,
+    pub mic_blocked: AtomicBool,
     clock: Mutex<Clock>,
 }
 
@@ -76,6 +77,7 @@ impl Control {
             live: AtomicBool::new(false),
             paused: AtomicBool::new(false),
             mic_muted: AtomicBool::new(false),
+            mic_blocked: AtomicBool::new(false),
             clock: Mutex::new(Clock { start: Instant::now(), paused_at: None, paused_total: Duration::ZERO }),
         }
     }
@@ -106,6 +108,8 @@ impl Control {
 }
 
 pub struct Done {
+    /// Windows' microphone privacy setting kept FastSnip from using the mic.
+    pub mic_blocked: bool,
     pub path: Option<PathBuf>,
     pub error: Option<String>,
     pub seconds: f64,
@@ -129,10 +133,10 @@ pub fn start_with(s: Settings, on_done: impl FnOnce(Done) + Send + 'static) -> A
             let res = unsafe { run(&s, &c2) };
             let secs = c2.elapsed().as_secs_f64();
             let done = match res {
-                Ok(()) => Done { path: Some(out), error: None, seconds: secs },
+                Ok(()) => Done { mic_blocked: c2.mic_blocked.load(Ordering::SeqCst), path: Some(out), error: None, seconds: secs },
                 Err(e) => {
                     let _ = std::fs::remove_file(&out);
-                    Done { path: None, error: Some(e.message().to_string()), seconds: secs }
+                    Done { mic_blocked: c2.mic_blocked.load(Ordering::SeqCst), path: None, error: Some(e.message().to_string()), seconds: secs }
                 }
             };
             on_done(done);
@@ -147,6 +151,10 @@ struct Source {
     client: IAudioClient,
     capture: IAudioCaptureClient,
     queue: VecDeque<f32>,
+    /// For the log: samples captured, packets flagged silent, loudest sample.
+    got: u64,
+    silent: u64,
+    peak: f32,
 }
 
 fn float_format() -> WAVEFORMATEXTENSIBLE {
@@ -178,7 +186,22 @@ unsafe fn open_source(loopback: bool) -> Result<Source> {
     client.Initialize(AUDCLNT_SHAREMODE_SHARED, flags, 2_000_000, 0, &fmt as *const _ as *const WAVEFORMATEX, None)?;
     let capture: IAudioCaptureClient = client.GetService()?;
     client.Start()?;
-    Ok(Source { client, capture, queue: VecDeque::new() })
+    Ok(Source { client, capture, queue: VecDeque::new(), got: 0, silent: 0, peak: 0.0 })
+}
+
+/// Windows' per-app microphone permission (Settings > Privacy & security >
+/// Microphone). Packaged apps get silence, not an error, when it's off, so
+/// ask first: the first time this shows Windows' own "allow microphone" prompt.
+fn mic_allowed() -> bool {
+    use windows::Security::Authorization::AppCapabilityAccess::{AppCapability, AppCapabilityAccessStatus as S};
+    let Ok(cap) = AppCapability::Create(&HSTRING::from("microphone")) else { return true };
+    match cap.CheckAccess() {
+        Ok(S::Allowed) => true,
+        Ok(S::UserPromptRequired) => cap.RequestAccessAsync().and_then(|op| op.join()).map(|s| s == S::Allowed).unwrap_or(true),
+        Ok(S::DeniedByUser) | Ok(S::DeniedBySystem) => false,
+        // Not packaged (development), or the check isn't available: just try.
+        _ => true,
+    }
 }
 
 unsafe fn drain(src: &mut Source) {
@@ -195,10 +218,16 @@ unsafe fn drain(src: &mut Source) {
         }
         let silent = flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32 != 0;
         let samples = frames as usize * 2;
+        src.got += samples as u64;
         if silent || data.is_null() {
+            src.silent += 1;
             src.queue.extend(std::iter::repeat_n(0.0, samples));
         } else {
-            src.queue.extend(std::slice::from_raw_parts(data as *const f32, samples));
+            let pcm = std::slice::from_raw_parts(data as *const f32, samples);
+            for v in pcm {
+                src.peak = src.peak.max(v.abs());
+            }
+            src.queue.extend(pcm);
         }
         let _ = src.capture.ReleaseBuffer(frames);
         // Never let a source run more than half a second ahead.
@@ -446,8 +475,25 @@ unsafe fn record(s: &Settings, ctl: &Control) -> Result<()> {
     }
 
     // Audio sources (either may be missing, e.g. no mic plugged in).
-    let mut sys = if s.system_audio { open_source(true).ok() } else { None };
-    let mut mic = if s.mic { open_source(false).ok() } else { None };
+    let open = |loopback: bool, want: bool| -> Option<Source> {
+        if !want {
+            return None;
+        }
+        match open_source(loopback) {
+            Ok(src) => Some(src),
+            Err(e) => {
+                log(&format!("couldn't open {}: {e}", if loopback { "system audio" } else { "microphone" }));
+                None
+            }
+        }
+    };
+    let mut sys = open(true, s.system_audio);
+    let mic_ok = !s.mic || mic_allowed();
+    if !mic_ok {
+        ctl.mic_blocked.store(true, Ordering::SeqCst);
+        log("microphone blocked by Windows privacy settings");
+    }
+    let mut mic = open(false, s.mic && mic_ok);
     let with_audio = sys.is_some() || mic.is_some();
 
     let path = HSTRING::from(s.out.as_os_str());
@@ -624,6 +670,11 @@ unsafe fn record(s: &Settings, ctl: &Control) -> Result<()> {
         n_video += 1;
         ctl.live.store(true, Ordering::SeqCst);
     }
+    let stats = |name: &str, s: &Option<Source>| match s {
+        Some(s) => format!("{name}: {} samples, {} silent packets, peak {:.3}", s.got, s.silent, s.peak),
+        None => format!("{name}: not open"),
+    };
+    log(&format!("rec audio: {}; {}", stats("system", &sys), stats("mic", &mic)));
     log(&format!("rec loop: {n_video} video, {n_audio} audio, {n_acq} desktop frames, {n_nodesk} early ticks, {:.1}s", ctl.elapsed().as_secs_f64()));
 
     if let Some(src) = &sys {

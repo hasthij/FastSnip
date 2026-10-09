@@ -26,7 +26,11 @@ public sealed partial class SettingsPage : Page
         NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
         Loaded += async (_, _) =>
         {
-            if (_didLoad) return;
+            if (_didLoad)
+            {
+                MicBlocked.IsOpen = Mic.IsOn && MicAccess.Blocked();
+                return;
+            }
             _didLoad = true;
             await LoadAll();
         };
@@ -63,6 +67,7 @@ public sealed partial class SettingsPage : Page
         Select(Fps, ((long)C.GetNumber("recording", "fps", 60)).ToString());
         Select(Quality, C.GetString("recording", "quality", "high"));
         Mic.IsOn = C.GetBool("recording", "microphone", true);
+        MicBlocked.IsOpen = Mic.IsOn && MicAccess.Blocked();
         SysAudio.IsOn = C.GetBool("recording", "system_audio", true);
         Cursor.IsOn = C.GetBool("recording", "show_cursor", true);
         Select(Countdown, ((long)C.GetNumber("recording", "countdown", 3)).ToString());
@@ -146,9 +151,13 @@ public sealed partial class SettingsPage : Page
         Save();
     }
 
-    private void Rec_Toggled(object sender, RoutedEventArgs e)
+    private async void MicSettings_Click(object sender, RoutedEventArgs e) => await MicAccess.OpenSettingsAsync();
+
+    private async void Rec_Toggled(object sender, RoutedEventArgs e)
     {
         if (_loading) return;
+        if (sender == Mic && Mic.IsOn) await MicAccess.RequestAsync();
+        MicBlocked.IsOpen = Mic.IsOn && MicAccess.Blocked();
         C.Set("recording", "microphone", Mic.IsOn);
         C.Set("recording", "system_audio", SysAudio.IsOn);
         C.Set("recording", "show_cursor", Cursor.IsOn);

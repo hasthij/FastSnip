@@ -55,6 +55,8 @@ struct Session {
     frames: Vec<HWND>,
     scale: f32,
     hover: Option<PillBtn>,
+    /// The "turn on microphone access" toast was shown for this recording.
+    warned: bool,
 }
 
 struct RecUi {
@@ -149,6 +151,7 @@ pub fn prepare(area: Rect, mic: bool, system_audio: bool) {
             frames: Vec::new(),
             scale,
             hover: None,
+            warned: false,
         });
     });
 }
@@ -343,6 +346,11 @@ fn tick() {
                 s.ctl.go.store(true, Ordering::SeqCst);
                 s.stage = Stage::Recording;
             }
+        }
+        // Tell the user right away if Windows is blocking the mic (the toast stays out of the video).
+        if s.stage == Stage::Recording && !s.warned && s.ctl.mic_blocked.load(Ordering::SeqCst) {
+            s.warned = true;
+            crate::notify::mic_permission(false);
         }
         draw(u);
     });

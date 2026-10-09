@@ -130,6 +130,13 @@
                         <StackPanel><TextBlock Text="Record microphone" Style="{StaticResource RowTitle}" /><TextBlock Style="{StaticResource RowHint}" Text="Uses your default microphone. You can mute it from the recording pill." /></StackPanel>
                         <ToggleSwitch x:Name="Mic" Grid.Column="1" OnContent="" OffContent="" Toggled="Rec_Toggled" />
                     </Grid>
+                    <InfoBar x:Name="MicBlocked" Severity="Warning" IsClosable="False" IsOpen="False" Margin="0,0,0,12"
+                             Title="Windows is blocking FastSnip's microphone"
+                             Message="Recordings will have system audio but no mic until you allow it.">
+                        <InfoBar.ActionButton>
+                            <Button Content="Turn on microphone access" Click="MicSettings_Click" />
+                        </InfoBar.ActionButton>
+                    </InfoBar>
                     <Rectangle Style="{StaticResource Divider}" />
                     <Grid Style="{StaticResource Row}">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
