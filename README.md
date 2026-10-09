@@ -106,7 +106,27 @@ While a window that runs **as administrator** is in front (Task Manager, an admi
 
 What to do: click anywhere outside that window (the desktop, any normal app) and press <kbd>PrtSc</kbd>. The capture can still include the admin window. Or, while the admin window is in front, use <kbd>Win</kbd> <kbd>Shift</kbd> <kbd>S</kbd>: there it opens Windows' own Snipping Tool, which is allowed to work over admin windows.
 
-Also note: newer versions of Windows 11's Snipping Tool use <kbd>Win</kbd> <kbd>Shift</kbd> <kbd>R</kbd> for recording. FastSnip takes it first everywhere except over admin windows. You can pick a different recording shortcut in **Settings › Shortcuts**.
+### When another app grabs the shortcut first
+
+Windows hands each key press to whichever program asks for it, and several common apps listen for the same keys FastSnip uses. When one of them gets there first, you'll see that app's screenshot tool instead of FastSnip's toolbar, or both at once.
+
+FastSnip uses a low-level keyboard hook, which normally sees <kbd>PrtSc</kbd> and <kbd>Win</kbd> <kbd>Shift</kbd> <kbd>S</kbd> before almost anything else and keeps them for itself. These are the ones that can still get in the way:
+
+| App | What it does | How to stop it |
+|---|---|---|
+| **Windows Snipping Tool** (Print Screen setting) | Opens on <kbd>PrtSc</kbd> | Settings › Accessibility › Keyboard › turn off **"Use the Print screen key to open screen capture"** (FastSnip's setup shows a button for this) |
+| **Windows Snipping Tool** (recording) | Newer Windows 11 versions record on <kbd>Win</kbd> <kbd>Shift</kbd> <kbd>R</kbd> | FastSnip takes it first, except over admin windows. To avoid the clash entirely, pick another recording shortcut in FastSnip's **Settings › Shortcuts** |
+| **OneDrive** | "Save screenshots I capture to OneDrive" saves a copy on <kbd>PrtSc</kbd> | OneDrive icon › Settings › **Sync and back up › Advanced** (or **Backup**) › turn off **Save screenshots I capture to OneDrive** |
+| **Dropbox** | Can save screenshots on <kbd>PrtSc</kbd> | Dropbox › Preferences › **Backups** › turn off **Share screenshots using Dropbox** |
+| **ShareX, Greenshot, Lightshot, Snagit, Flameshot** | Use <kbd>PrtSc</kbd> as their own shortcut | Change or remove their hotkey in their settings, or quit them. Two screenshot tools on the same key will always fight |
+| **Xbox Game Bar** | <kbd>Win</kbd> <kbd>Alt</kbd> <kbd>PrtSc</kbd> (screenshot), <kbd>Win</kbd> <kbd>Alt</kbd> <kbd>R</kbd> (record) | No clash with FastSnip's defaults. Only matters if you give FastSnip one of these combos |
+| **NVIDIA / AMD overlays, Discord, Steam** | Their own capture shortcuts (e.g. <kbd>Alt</kbd> <kbd>F1</kbd>, <kbd>F12</kbd>) | Only a problem if you choose the same keys for FastSnip |
+
+How to tell what's happening:
+
+- **FastSnip doesn't open at all:** another app is taking the key, or an admin window is in front (see above). Check the list, then try again.
+- **FastSnip opens and another tool opens too:** that app also reacts to the key. Turn its shortcut off.
+- **One combo just won't work:** pick a different one. In **Settings › Shortcuts**, click **Add** and press the new keys. Combos with <kbd>Ctrl</kbd> <kbd>Shift</kbd> or <kbd>Ctrl</kbd> <kbd>Alt</kbd> (for example <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>X</kbd>) are almost never taken.
 
 If something doesn't work, FastSnip keeps a small log at `%LOCALAPPDATA%\FastSnip\core.log` (inside the package it's under `%LOCALAPPDATA%\Packages\FastSnip_…\LocalCache\Local\FastSnip\`).
 
