@@ -57,7 +57,7 @@ You get one zip from the [Releases page](../../releases). It holds four files:
    Click **Yes**. (A second console window may flash open for a moment. That's the one-line step that trusts the certificate.)
 
 4. **Back in the black window**: *"Installing FastSnip..."* with a progress bar, then
-   *"Installed FastSnip 0.1.2.0. Starting it..."*. The window closes.
+   *"Installed FastSnip 0.1.4.0. Starting it..."*. The window closes.
 
 5. **FastSnip opens** on its first-run setup (shown below). Pick your options, press **Start using FastSnip**, and you're done.
 
@@ -99,6 +99,16 @@ To also remove the certificate: press <kbd>Win</kbd> <kbd>R</kbd>, type `certlm.
 All of them can be changed (and more added) in **Settings › Shortcuts**.
 
 > If <kbd>PrtSc</kbd> still opens Windows' own Snipping Tool, turn off **Settings › Accessibility › Keyboard › "Use the Print screen key to open screen capture"**. FastSnip's setup shows a button that takes you there.
+
+### Known limitation: admin windows (Task Manager and similar)
+
+While a window that runs **as administrator** is in front (Task Manager, an admin terminal, some installers), Windows doesn't pass keyboard shortcuts to normal apps. That's a Windows security rule (User Interface Privilege Isolation). So FastSnip's shortcuts don't fire there. ShareX and Greenshot have the same limit.
+
+What to do: click anywhere outside that window (the desktop, any normal app) and press <kbd>PrtSc</kbd>. The capture can still include the admin window. Or, while the admin window is in front, use <kbd>Win</kbd> <kbd>Shift</kbd> <kbd>S</kbd>: there it opens Windows' own Snipping Tool, which is allowed to work over admin windows.
+
+Also note: newer versions of Windows 11's Snipping Tool use <kbd>Win</kbd> <kbd>Shift</kbd> <kbd>R</kbd> for recording. FastSnip takes it first everywhere except over admin windows. You can pick a different recording shortcut in **Settings › Shortcuts**.
+
+If something doesn't work, FastSnip keeps a small log at `%LOCALAPPDATA%\FastSnip\core.log` (inside the package it's under `%LOCALAPPDATA%\Packages\FastSnip_…\LocalCache\Local\FastSnip\`).
 
 ### On the toolbar
 
@@ -170,7 +180,7 @@ cd core; cargo build --release
 cd ..\app\FastSnip.App; dotnet build -c Release -p:Platform=x64
 
 # the signed MSIX + installer files in out\release
-cd ..\..; powershell -ExecutionPolicy Bypass -File .\packaging\build.ps1 -Version 0.1.2.0
+cd ..\..; powershell -ExecutionPolicy Bypass -File .\packaging\build.ps1 -Version 0.1.4.0
 ```
 
 `build.ps1 -Store -IdentityName … -Publisher …` makes the `.msixupload` for the Microsoft Store instead.

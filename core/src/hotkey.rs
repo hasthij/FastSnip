@@ -116,6 +116,55 @@ pub fn set_bindings(s: &Shortcuts) {
     add(&s.record_full_screen, Action::RecordFullScreen);
     add(&s.grab_text, Action::GrabText);
     *BINDINGS.get_or_init(Default::default).lock().unwrap() = v;
+    // Re-register the system hotkeys on the hook thread (they belong to that thread).
+    let id = HOOK_THREAD.load(Ordering::SeqCst);
+    if id != 0 {
+        unsafe {
+            let _ = PostThreadMessageW(id, WM_REREGISTER, WPARAM(0), LPARAM(0));
+        }
+    }
+}
+
+const WM_REREGISTER: u32 = WM_APP + 30;
+const HOTKEY_BASE: i32 = 0x4F00;
+
+/// System hotkeys for every binding Windows lets us register.
+///
+/// The low-level hook can't see keys while an app running as administrator
+/// (Task Manager, an elevated terminal) is in front: Windows' UI privilege
+/// isolation hides them. Registered hotkeys are delivered anyway. In normal
+/// use the hook swallows the key first, so the hotkey never fires twice.
+/// Combos Windows keeps for itself (like Win+Shift+S) just fail to register.
+unsafe fn register_hotkeys() -> i32 {
+    let list: Vec<Binding> = BINDINGS.get().map(|b| b.lock().unwrap().clone()).unwrap_or_default();
+    let mut n = 0;
+    for (i, b) in list.iter().enumerate() {
+        let mut m = MOD_NOREPEAT;
+        if b.mods & MOD_WIN != 0 {
+            m |= windows::Win32::UI::Input::KeyboardAndMouse::MOD_WIN;
+        }
+        if b.mods & MOD_CTRL != 0 {
+            m |= MOD_CONTROL;
+        }
+        if b.mods & MOD_SHIFT != 0 {
+            m |= windows::Win32::UI::Input::KeyboardAndMouse::MOD_SHIFT;
+        }
+        if b.mods & MOD_ALT != 0 {
+            m |= windows::Win32::UI::Input::KeyboardAndMouse::MOD_ALT;
+        }
+        match RegisterHotKey(None, HOTKEY_BASE + i as i32, m, b.vk) {
+            Ok(()) => n += 1,
+            Err(e) => crate::overlay::log(&format!("system hotkey {:#x}+{:#x} not registered: {e}", b.mods, b.vk)),
+        }
+    }
+    crate::overlay::log(&format!("registered {n} of {} system hotkeys", list.len()));
+    list.len() as i32
+}
+
+unsafe fn unregister_hotkeys(count: i32) {
+    for i in 0..count {
+        let _ = UnregisterHotKey(None, HOTKEY_BASE + i);
+    }
 }
 
 /// Start the hook thread. Matching shortcuts post WM_HOTKEY_ACTION to `target`.
@@ -131,11 +180,29 @@ pub fn start(target: HWND) {
             let hmod = GetModuleHandleW(None).ok();
             let hook =
                 SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), hmod.map(|m| m.into()), 0);
+            let mut registered = register_hotkeys();
             let mut msg = MSG::default();
             while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+                if msg.hwnd.is_invalid() && msg.message == WM_HOTKEY {
+                    // Delivered only when the hook couldn't see the key (admin window in front).
+                    let idx = msg.wParam.0 as i32 - HOTKEY_BASE;
+                    crate::overlay::log(&format!("system hotkey {idx} pressed"));
+                    let action = BINDINGS.get().and_then(|b| b.lock().unwrap().get(idx.max(0) as usize).map(|b| b.action));
+                    if let Some(a) = action {
+                        let target = HWND(TARGET.load(Ordering::SeqCst) as *mut _);
+                        let _ = PostMessageW(Some(target), WM_HOTKEY_ACTION, WPARAM(a as usize), LPARAM(0));
+                    }
+                    continue;
+                }
+                if msg.hwnd.is_invalid() && msg.message == WM_REREGISTER {
+                    unregister_hotkeys(registered);
+                    registered = register_hotkeys();
+                    continue;
+                }
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
+            unregister_hotkeys(registered);
             if let Ok(h) = hook {
                 let _ = UnhookWindowsHookEx(h);
             }

@@ -378,6 +378,7 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                 }
             }
             if let Some(a) = Action::from_usize(wp.0) {
+                overlay::log(&format!("action {a:?}"));
                 overlay::with(|o| o.on_action(a));
             }
             LRESULT(0)

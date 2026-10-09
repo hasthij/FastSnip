@@ -2104,6 +2104,20 @@ pub fn log(s: &str) {
     if std::env::var_os("FASTSNIP_LOG").is_some() {
         eprintln!("[fastsnip] {s}");
     }
+    // Also keep a small log file for troubleshooting (%LOCALAPPDATA%\FastSnip\core.log, ~256 KB max).
+    if let Some(dir) = std::env::var_os("LOCALAPPDATA").map(|d| std::path::PathBuf::from(d).join("FastSnip")) {
+        let path = dir.join("core.log");
+        let _ = std::fs::create_dir_all(&dir);
+        if std::fs::metadata(&path).map(|m| m.len() > 256 * 1024).unwrap_or(false) {
+            let _ = std::fs::rename(&path, dir.join("core.old.log"));
+        }
+        let t = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
+        let line = format!("{:02}:{:02}:{:02}.{:03} {s}\n", t.wHour, t.wMinute, t.wSecond, t.wMilliseconds);
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            let _ = f.write_all(line.as_bytes());
+        }
+    }
 }
 
 #[cfg(test)]
