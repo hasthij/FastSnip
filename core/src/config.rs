@@ -40,6 +40,8 @@ pub struct Look {
     /// "system", "light" or "dark".
     pub theme: String,
     pub magnifier: bool,
+    /// Toolbar pop-in and dim fade. Our own setting: Windows' "Animation effects" doesn't affect it.
+    pub animations: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +98,7 @@ impl Default for Look {
             accent: "teal".into(),
             theme: "system".into(),
             magnifier: true,
+            animations: true,
         }
     }
 }

@@ -53,6 +53,21 @@ enum Btn {
     Close,
 }
 
+const ANIM_TIMER: usize = 1;
+const DIM_MS: f32 = 90.0;
+const BAR_MS: f32 = 140.0;
+
+fn ease_out_cubic(t: f32) -> f32 {
+    1.0 - (1.0 - t).powi(3)
+}
+
+/// Ease out with a small overshoot, for the toolbar "pop".
+fn ease_out_back(t: f32) -> f32 {
+    let c1 = 1.0;
+    let c3 = c1 + 1.0;
+    1.0 + c3 * (t - 1.0).powi(3) + c1 * (t - 1.0).powi(2)
+}
+
 const SHAPES: [(Shape, &str, &str); 5] = [
     (Shape::Rect, "square-dashed", "1"),
     (Shape::Window, "app-window", "2"),
@@ -102,6 +117,8 @@ pub struct Overlay {
     audio: bool,
     palette: Palette,
     magnifier: bool,
+    animations: bool,
+    anim_t0: Option<Instant>,
     shots_dir: PathBuf,
     dash: Option<ID2D1StrokeStyle>,
     notice: Option<String>,
@@ -198,6 +215,8 @@ impl Overlay {
             audio: true,
             palette: theme::palette(&cfg.look.accent, &cfg.look.theme),
             magnifier: cfg.look.magnifier,
+            animations: cfg.look.animations,
+            anim_t0: None,
             shots_dir: output::screenshots_dir(&cfg.saving.screenshots_dir),
             dash,
             notice: None,
@@ -207,6 +226,10 @@ impl Overlay {
         // Pre-create the windows and swap chains, and draw once so fonts and
         // icons are cached: the first open is as fast as every later one.
         o.sync_windows();
+        // Warm up the animated path too (layers are set up on first use).
+        o.anim_t0 = Some(Instant::now());
+        o.render_all();
+        o.anim_t0 = None;
         o.render_all();
         Ok(o)
     }
@@ -214,6 +237,7 @@ impl Overlay {
     pub fn apply_config(&mut self, cfg: &Config) {
         self.palette = theme::palette(&cfg.look.accent, &cfg.look.theme);
         self.magnifier = cfg.look.magnifier;
+        self.animations = cfg.look.animations;
         self.shots_dir = output::screenshots_dir(&cfg.saving.screenshots_dir);
     }
 
@@ -368,6 +392,7 @@ impl Overlay {
         let t_upload = t0.elapsed();
         self.visible = true;
         self.opened_at = Some(t0);
+        self.anim_t0 = self.animations.then(Instant::now);
         self.render_all();
         let t_render = t0.elapsed();
         for w in &self.wins {
@@ -385,6 +410,11 @@ impl Overlay {
         }
         let t_show = t0.elapsed();
         if let Some(w) = self.wins.get(self.tb_mon) {
+            if self.anim_t0.is_some() {
+                unsafe {
+                    SetTimer(Some(w.hwnd), ANIM_TIMER, 8, None);
+                }
+            }
             force_foreground(w.hwnd);
         }
         let t_visible = t0.elapsed();
@@ -418,8 +448,12 @@ impl Overlay {
             return;
         }
         self.visible = false;
+        self.anim_t0 = None;
         unsafe {
             let _ = ReleaseCapture();
+            if let Some(w) = self.wins.get(self.tb_mon) {
+                let _ = KillTimer(Some(w.hwnd), ANIM_TIMER);
+            }
         }
         for w in &mut self.wins {
             unsafe {
@@ -494,6 +528,18 @@ impl Overlay {
                 }
                 if self.visible {
                     self.render(idx);
+                }
+                Some(LRESULT(0))
+            }
+            WM_TIMER if wp.0 == ANIM_TIMER => {
+                if self.visible {
+                    self.render_all();
+                }
+                if self.anim_progress().1 >= 1.0 {
+                    self.anim_t0 = None;
+                    unsafe {
+                        let _ = KillTimer(Some(hwnd), ANIM_TIMER);
+                    }
                 }
                 Some(LRESULT(0))
             }
@@ -905,6 +951,14 @@ impl Overlay {
     }
 
     fn draw(&mut self, idx: usize) {
+        let saved = self.palette;
+        let (dim_t, _) = self.anim_progress();
+        self.palette.dim.a *= ease_out_cubic(dim_t);
+        self.draw_inner(idx);
+        self.palette = saved;
+    }
+
+    fn draw_inner(&mut self, idx: usize) {
         let p = self.palette;
         let mon = self.wins[idx].mon.clone();
         let (mw, mh) = (mon.rect.w as f32, mon.rect.h as f32);
@@ -1081,7 +1135,7 @@ impl Overlay {
             self.draw_badge(&text, r, mw, mh, s, self.shape == Shape::Full);
         }
         if idx == self.tb_mon {
-            self.draw_toolbar();
+            self.draw_toolbar_animated();
         }
         let over_bar = self.in_toolbar(self.mouse);
         if self.magnifier
@@ -1114,6 +1168,17 @@ impl Overlay {
                     },
                 );
             }
+        }
+    }
+
+    /// (dim fade, toolbar pop) progress, each 0..=1. Always 1 with animations off.
+    fn anim_progress(&self) -> (f32, f32) {
+        match self.anim_t0 {
+            Some(t0) => {
+                let ms = t0.elapsed().as_secs_f32() * 1000.0;
+                ((ms / DIM_MS).min(1.0), (ms / BAR_MS).min(1.0))
+            }
+            None => (1.0, 1.0),
         }
     }
 
@@ -1156,6 +1221,35 @@ impl Overlay {
         self.gfx.fill_round(r, 6.0 * s, p.bar);
         self.gfx.stroke_round(r, 6.0 * s, p.bar_line, 1.0);
         self.gfx.text(text, &f, x + 8.0 * s, y + 3.0 * s, p.fg);
+    }
+
+    fn draw_toolbar_animated(&mut self) {
+        let (_, t) = self.anim_progress();
+        if t >= 1.0 {
+            return self.draw_toolbar();
+        }
+        let s = self.scale();
+        let (bar, _, _) = self.layout();
+        let k = 0.94 + 0.06 * ease_out_back(t);
+        let dy = -8.0 * s * (1.0 - ease_out_cubic(t));
+        let (cx, cy) = ((bar.left + bar.right) / 2.0, bar.top);
+        let m = Matrix3x2::translation(-cx, -cy) * Matrix3x2::scale(k, k) * Matrix3x2::translation(cx, cy + dy);
+        unsafe {
+            let params = D2D1_LAYER_PARAMETERS1 {
+                contentBounds: rf(-1e6, -1e6, 2e6, 2e6),
+                geometricMask: std::mem::ManuallyDrop::new(None),
+                maskAntialiasMode: D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                maskTransform: Matrix3x2::identity(),
+                opacity: ease_out_cubic(t),
+                opacityBrush: std::mem::ManuallyDrop::new(None),
+                layerOptions: D2D1_LAYER_OPTIONS1_NONE,
+            };
+            self.gfx.dc.SetTransform(&m);
+            self.gfx.dc.PushLayer(&params, None);
+            self.draw_toolbar();
+            self.gfx.dc.PopLayer();
+            self.gfx.dc.SetTransform(&Matrix3x2::identity());
+        }
     }
 
     fn draw_toolbar(&mut self) {

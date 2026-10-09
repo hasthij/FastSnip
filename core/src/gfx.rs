@@ -445,7 +445,7 @@ impl Gfx {
             let mut old = Matrix3x2::identity();
             self.dc.GetTransform(&mut old);
             self.dc
-                .SetTransform(&(Matrix3x2::scale(s, s) * Matrix3x2::translation(x, y)));
+                .SetTransform(&(Matrix3x2::scale(s, s) * Matrix3x2::translation(x, y) * old));
             dc5.DrawSvgDocument(doc);
             self.dc.SetTransform(&old);
         }
