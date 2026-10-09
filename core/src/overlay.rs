@@ -136,6 +136,10 @@ pub struct Overlay {
     read_on_freeze: bool,
     text_bar: Vec<(BarBtn, Rect)>,
     text_pressed: Option<BarBtn>,
+    /// Record: the chosen area, waiting for Start. The recorder is already setting up.
+    rec_area: Option<Rect>,
+    rec_chip: Option<Rect>,
+    rec_fps: u32,
 }
 
 thread_local! {
@@ -244,6 +248,9 @@ impl Overlay {
             read_on_freeze: cfg.text.read_on_freeze,
             text_bar: Vec::new(),
             text_pressed: None,
+            rec_area: None,
+            rec_chip: None,
+            rec_fps: cfg.recording.fps,
         };
         // Pre-create the windows and swap chains, and draw once so fonts and
         // icons are cached: the first open is as fast as every later one.
@@ -263,6 +270,7 @@ impl Overlay {
         self.anim_speed = cfg.look.animation_speed.clamp(0.5, 3.0);
         self.keep_lines = cfg.text.keep_line_breaks;
         self.read_on_freeze = cfg.text.read_on_freeze;
+        self.rec_fps = cfg.recording.fps;
         self.shots_dir = output::screenshots_dir(&cfg.saving.screenshots_dir);
     }
 
@@ -313,6 +321,19 @@ impl Overlay {
         }
     }
 
+    /// Windows allows one desktop duplication per display per process, so
+    /// the overlay hands it to the recorder while recording (screenshots in
+    /// the meantime use the GDI grab).
+    pub fn suspend_dup(&mut self) {
+        self.dup = None;
+    }
+
+    pub fn resume_dup(&mut self) {
+        if self.dup.is_none() && !crate::recui::is_busy() {
+            self.dup = Dup::new(&self.gfx.d3d).ok();
+        }
+    }
+
     pub fn displays_changed(&mut self) {
         if let Some(d) = &mut self.dup {
             d.reset();
@@ -333,7 +354,23 @@ impl Overlay {
         match a {
             Action::OpenToolbar => self.open(Intent::Snip, None),
             Action::GrabText => self.open(Intent::Text, Some(Shape::Rect)),
-            Action::RecordFullScreen => self.open(Intent::Record, Some(Shape::Full)),
+            Action::RecordFullScreen => {
+                // The shortcut toggles: stop if recording, else record the display under the mouse.
+                if crate::recui::is_busy() {
+                    crate::recui::stop();
+                } else {
+                    let mut p = POINT::default();
+                    unsafe {
+                        let _ = GetCursorPos(&mut p);
+                    }
+                    let mons = capture::monitors();
+                    if let Some(m) = mons.iter().find(|m| m.rect.contains(p.x, p.y)).or(mons.first()) {
+                        self.suspend_dup();
+                        crate::recui::prepare(m.rect, self.mic, self.audio);
+                        crate::recui::begin();
+                    }
+                }
+            }
             Action::SnipFullScreen => self.snip_full_screen_now(),
         }
     }
@@ -495,6 +532,10 @@ impl Overlay {
         self.text = None;
         self.text_bar.clear();
         self.text_pressed = None;
+        if self.rec_area.take().is_some() {
+            crate::recui::cancel_prepared();
+        }
+        self.rec_chip = None;
     }
 
     // ---------------------------------------------------------------- messages
@@ -514,6 +555,9 @@ impl Overlay {
                 self.mouse = g;
                 if let Some(b) = self.btn_at(g) {
                     self.pressed = Some(b);
+                } else if self.rec_chip.map(|r| r.contains(g.0, g.1)).unwrap_or(false) {
+                    self.start_recording();
+                    return Some(LRESULT(0));
                 } else if let Some(tb) = self.text_btn_at(g) {
                     self.text_pressed = Some(tb);
                 } else if self.text.as_mut().map(|t| t.press(g)) == Some(true) {
@@ -521,9 +565,13 @@ impl Overlay {
                         SetCapture(hwnd);
                     }
                 } else {
-                    // Outside the text area: start over with a new selection.
+                    // Outside the text area or chip: start over with a new selection.
                     self.text = None;
                     self.text_bar.clear();
+                    if self.rec_area.take().is_some() {
+                        crate::recui::cancel_prepared();
+                        self.rec_chip = None;
+                    }
                     if matches!(self.shape, Shape::Rect | Shape::Free) {
                         self.drag = Some(Drag {
                             start: g,
@@ -694,7 +742,8 @@ impl Overlay {
             unsafe {
                 let _ = ReleaseCapture();
             }
-            let clip = self.wins[d.mon].mon.rect;
+            // Selections may span displays.
+            let clip = capture::virtual_screen();
             match self.shape {
                 Shape::Free => {
                     let pts: Vec<(i32, i32)> = d
@@ -746,14 +795,30 @@ impl Overlay {
                 .as_ref()
                 .map(|e| e.0)
                 .or_else(|| self.hovered_window().map(|w| w.rect)),
-            Shape::Full => Some(
-                self.wins[self.full_mon.unwrap_or_else(|| self.mon_at(x, y))]
-                    .mon
-                    .rect,
-            ),
+            Shape::Full => {
+                let _ = (x, y);
+                Some(self.full_target().0)
+            }
             _ => None,
         }
         .and_then(|r| r.intersect(&capture::virtual_screen()))
+    }
+
+    /// Full screen target: the display under the mouse (or picked with Tab), or all displays.
+    fn full_target(&self) -> (Rect, String) {
+        let i = self.full_mon.unwrap_or_else(|| self.mon_at(self.mouse.0, self.mouse.1));
+        if i >= self.wins.len() {
+            let mut u = self.wins[0].mon.rect;
+            for w in &self.wins[1..] {
+                let r = w.mon.rect;
+                let (x, y) = (u.x.min(r.x), u.y.min(r.y));
+                u = Rect { x, y, w: u.right().max(r.right()) - x, h: u.bottom().max(r.bottom()) - y };
+            }
+            return (u, format!("All {} displays · {} × {} · Enter", self.wins.len(), u.w, u.h));
+        }
+        let r = self.wins[i].mon.rect;
+        let tab = if self.wins.len() > 1 { " · Tab for next" } else { "" };
+        (r, format!("Display {} · {} × {} · Enter{tab}", i + 1, r.w, r.h))
     }
 
     fn hovered_window(&self) -> Option<&WinInfo> {
@@ -798,7 +863,8 @@ impl Overlay {
                 }
             }
             v if v == VK_TAB.0 as u32 && self.shape == Shape::Full => {
-                let n = self.wins.len().max(1);
+                // Each display, then "All displays" when there's more than one.
+                let n = self.wins.len().max(1) + usize::from(self.wins.len() > 1);
                 let cur = self
                     .full_mon
                     .unwrap_or_else(|| self.mon_at(self.mouse.0, self.mouse.1));
@@ -808,15 +874,13 @@ impl Overlay {
                     (cur + 1) % n
                 });
             }
+            v if v == VK_RETURN.0 as u32 && self.rec_area.is_some() => {
+                return self.start_recording();
+            }
             v if v == VK_RETURN.0 as u32 => {
                 let r = match self.shape {
                     Shape::Window | Shape::Element => self.click_target(),
-                    _ => {
-                        let i = self
-                            .full_mon
-                            .unwrap_or_else(|| self.mon_at(self.mouse.0, self.mouse.1));
-                        Some(self.wins[i].mon.rect)
-                    }
+                    _ => Some(self.full_target().0),
                 };
                 if let Some(r) = r {
                     return self.finish(Target::Area(r));
@@ -848,6 +912,10 @@ impl Overlay {
         if i != Intent::Text {
             self.text = None;
             self.text_bar.clear();
+        }
+        if i != Intent::Record && self.rec_area.take().is_some() {
+            crate::recui::cancel_prepared();
+            self.rec_chip = None;
         }
         self.intent = i;
     }
@@ -884,7 +952,23 @@ impl Overlay {
                 self.close();
             }
             Intent::Record => {
-                self.notice = Some("Recording arrives in the next build".into());
+                if crate::recui::is_busy() {
+                    self.notice = Some("Already recording. Stop it from the pill first".into());
+                    self.render_all();
+                    return;
+                }
+                let r = match t {
+                    Target::Area(r) => r,
+                    Target::Shape(pts) => {
+                        let (minx, maxx) = pts.iter().fold((i32::MAX, i32::MIN), |a, p| (a.0.min(p.0), a.1.max(p.0)));
+                        let (miny, maxy) = pts.iter().fold((i32::MAX, i32::MIN), |a, p| (a.0.min(p.1), a.1.max(p.1)));
+                        Rect { x: minx, y: miny, w: maxx - minx, h: maxy - miny }
+                    }
+                };
+                // Start the slow encoder setup now; Start + countdown hide it.
+                self.suspend_dup();
+                crate::recui::prepare(r, self.mic, self.audio);
+                self.rec_area = Some(r);
                 self.render_all();
             }
             Intent::Text => {
@@ -900,6 +984,74 @@ impl Overlay {
                 self.render_all();
             }
         }
+    }
+
+    fn start_recording(&mut self) {
+        if self.rec_area.take().is_none() {
+            return;
+        }
+        self.rec_chip = None;
+        crate::recui::begin();
+        self.close();
+    }
+
+    fn draw_rec_pending(&mut self, idx: usize) {
+        let p = self.palette;
+        let mon = self.wins[idx].mon.clone();
+        let (mw, mh) = (mon.rect.w as f32, mon.rect.h as f32);
+        let s = mon.scale();
+        let Some(area) = self.rec_area else { return };
+        let loc = |r: &Rect| rf((r.x - mon.rect.x) as f32, (r.y - mon.rect.y) as f32, r.w as f32, r.h as f32);
+        match area.intersect(&mon.rect) {
+            Some(ri) => {
+                let lr = loc(&ri);
+                self.dim_outside(lr, mw, mh);
+                let inset = if ri == mon.rect { 1.5 * s } else { 0.0 };
+                self.gfx.stroke(
+                    rf(lr.left + inset, lr.top + inset, lr.right - lr.left - inset * 2.0, lr.bottom - lr.top - inset * 2.0),
+                    p.rec,
+                    2.0 * s,
+                    self.dash.as_ref(),
+                );
+            }
+            None => {
+                self.gfx.fill(rf(0.0, 0.0, mw, mh), p.dim);
+                return;
+            }
+        }
+        if self.mon_at(area.x + area.w / 2, area.y + area.h / 2) != idx {
+            return;
+        }
+        let lr = loc(&area);
+        let f = self.gfx.fonts(s).label.clone();
+        let k = self.gfx.fonts(s).key.clone();
+        let start = "Start recording";
+        let info = format!("{} × {} · {} fps", area.w & !1, area.h & !1, self.rec_fps);
+        let (sw, th) = self.gfx.text_size(start, &f);
+        let (kw, _) = self.gfx.text_size("Enter", &k);
+        let (iw, _) = self.gfx.text_size(&info, &f);
+        let bh = 32.0 * s;
+        let start_w = 12.0 * s + 16.0 * s + 7.0 * s + sw + 8.0 * s + kw + 10.0 * s + 12.0 * s;
+        let total = 3.0 * s + start_w + 2.0 * s + iw + 24.0 * s + 3.0 * s;
+        let x = ((lr.left + lr.right) / 2.0 - total / 2.0).clamp(4.0, (mw - total - 4.0).max(4.0));
+        let mut y = lr.bottom + 10.0 * s;
+        if y + bh + 6.0 * s > mh - 4.0 {
+            y = (lr.bottom - bh - 22.0 * s).max(4.0);
+        }
+        let outer = rf(x, y, total, bh + 6.0 * s);
+        self.gfx.fill_round(outer, 10.0 * s, p.bar);
+        self.gfx.stroke_round(outer, 10.0 * s, p.bar_line, 1.0);
+        let br = rf(x + 3.0 * s, y + 3.0 * s, start_w, bh);
+        self.gfx.fill_round(br, 7.0 * s, p.rec);
+        let white = theme::rgb(0xffffff);
+        let cy = br.top + bh / 2.0;
+        self.gfx.icon("circle-dot", br.left + 12.0 * s, cy - 8.0 * s, 16.0 * s, white);
+        self.gfx.text(start, &f, br.left + 35.0 * s, cy - th / 2.0, white);
+        let kr = rf(br.left + 35.0 * s + sw + 8.0 * s, cy - 8.0 * s, kw + 10.0 * s, 16.0 * s);
+        self.gfx.stroke_round(kr, 4.0 * s, theme::rgba(0xffffff, 0.6), 1.0);
+        self.gfx.text_center("Enter", &k, kr, white);
+        self.gfx.text(&info, &f, br.right + 14.0 * s, cy - th / 2.0, p.fg);
+        self.rec_chip = Some(Rect { x: mon.rect.x + br.left as i32, y: mon.rect.y + br.top as i32, w: start_w as i32, h: bh as i32 });
     }
 
     // ---------------------------------------------------------------- text mode
@@ -1177,6 +1329,7 @@ impl Overlay {
             }
         };
         let Some(img) = img else { return };
+        let img = std::sync::Arc::new(img);
         let t0 = Instant::now();
         output::clipboard_set_image(self.main, &img);
         log(&format!(
@@ -1338,6 +1491,11 @@ impl Overlay {
             self.draw_tail(idx, false);
             return;
         }
+        if self.rec_area.is_some() {
+            self.draw_rec_pending(idx);
+            self.draw_tail(idx, false);
+            return;
+        }
         let edge = if self.intent == Intent::Record {
             p.rec
         } else {
@@ -1393,7 +1551,8 @@ impl Overlay {
                 }
             } else {
                 let r = Rect::from_points(d.start.0, d.start.1, self.mouse.0, self.mouse.1);
-                let clip = self.wins[d.mon].mon.rect;
+                // Selections may span displays.
+            let clip = capture::virtual_screen();
                 match r.intersect(&clip).and_then(|r| r.intersect(&mon.rect)) {
                     Some(r) => {
                         let lr = to_local(&r);
@@ -1430,16 +1589,7 @@ impl Overlay {
                     };
                     r.map(|r| (r, label))
                 }
-                Shape::Full => {
-                    let i = self
-                        .full_mon
-                        .unwrap_or_else(|| self.mon_at(self.mouse.0, self.mouse.1));
-                    let m = &self.wins[i].mon;
-                    Some((
-                        m.rect,
-                        format!("Display {} · {} × {} · Enter", i + 1, m.rect.w, m.rect.h),
-                    ))
-                }
+                Shape::Full => Some(self.full_target()),
                 _ => None,
             };
             match target
@@ -1895,16 +2045,23 @@ fn shell_open(target: &str) {
     }
 }
 
-/// Start the FastSnip app window (a separate exe) if it's installed next to us.
+/// Start the FastSnip app window (a separate exe next to us).
 fn open_app() {
+    open_app_with(&[]);
+}
+
+/// Start the app window with arguments, e.g. `--edit <file>`.
+pub fn open_app_with(args: &[&str]) {
     if let Ok(exe) = std::env::current_exe() {
-        let app = exe.with_file_name("FastSnip.App.exe");
-        if app.exists() {
-            let _ = std::process::Command::new(app).spawn();
-            return;
+        for name in ["FastSnip.App.exe", "app\\FastSnip.App.exe"] {
+            let app = exe.with_file_name(name);
+            if app.exists() {
+                let _ = std::process::Command::new(app).args(args).spawn();
+                return;
+            }
         }
     }
-    log("app window not installed yet");
+    crate::notify::message("The FastSnip window isn't installed");
 }
 
 pub fn log(s: &str) {

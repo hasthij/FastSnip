@@ -33,6 +33,7 @@ pub struct Image {
 pub struct PngReady {
     pub png: Vec<u8>,
     pub path: Option<PathBuf>,
+    pub image: std::sync::Arc<Image>,
 }
 
 fn known_folder(id: &windows::core::GUID) -> Option<PathBuf> {
@@ -203,14 +204,14 @@ pub fn clipboard_set_text(owner: HWND, text: &str) -> bool {
 }
 
 /// Encode and save on a worker thread, then notify `notify` with WM_PNG_READY.
-pub fn save_async(img: Image, dir: PathBuf, notify: HWND) {
+pub fn save_async(img: std::sync::Arc<Image>, dir: PathBuf, notify: HWND) {
     let target = notify.0 as isize;
     std::thread::spawn(move || {
         let Some(png) = encode_png(&img) else { return };
         let _ = std::fs::create_dir_all(&dir);
         let path = unique_path(&dir, &timestamp_name("Screenshot", "png"));
         let saved = std::fs::write(&path, &png).is_ok().then_some(path);
-        let msg = Box::new(PngReady { png, path: saved });
+        let msg = Box::new(PngReady { png, path: saved, image: img });
         unsafe {
             let _ = PostMessageW(
                 Some(HWND(target as *mut _)),

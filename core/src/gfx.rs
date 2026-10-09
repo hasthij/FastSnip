@@ -50,6 +50,11 @@ pub const ICONS: &[(&str, &str)] = &[
     ("circle-dot", include_str!("../assets/icons/circle-dot.svg")),
     ("pause", include_str!("../assets/icons/pause.svg")),
     ("square", include_str!("../assets/icons/square.svg")),
+    ("pen-line", include_str!("../assets/icons/pen-line.svg")),
+    ("folder-open", include_str!("../assets/icons/folder-open.svg")),
+    ("trash-2", include_str!("../assets/icons/trash-2.svg")),
+    ("scissors", include_str!("../assets/icons/scissors.svg")),
+    ("circle-check", include_str!("../assets/icons/circle-check.svg")),
 ];
 
 pub fn rf(x: f32, y: f32, w: f32, h: f32) -> D2D_RECT_F {

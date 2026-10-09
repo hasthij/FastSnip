@@ -11,7 +11,48 @@ pub struct Config {
     pub shortcuts: Shortcuts,
     pub look: Look,
     pub text: TextSettings,
+    pub recording: Recording,
     pub saving: Saving,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Recording {
+    /// 30, 60 or 120.
+    pub fps: u32,
+    /// "low", "standard" or "high".
+    pub quality: String,
+    pub microphone: bool,
+    pub system_audio: bool,
+    pub show_cursor: bool,
+    /// Seconds before recording starts: 0, 3 or 5.
+    pub countdown: u32,
+}
+
+impl Default for Recording {
+    fn default() -> Self {
+        Self {
+            fps: 60,
+            quality: "high".into(),
+            microphone: true,
+            system_audio: true,
+            show_cursor: true,
+            countdown: 3,
+        }
+    }
+}
+
+impl Recording {
+    /// Bitrate in Mbps for an area, from the quality setting (bits per pixel per frame).
+    pub fn mbps(&self, w: i32, h: i32) -> u32 {
+        let bpp = match self.quality.as_str() {
+            "low" => 0.03,
+            "standard" => 0.06,
+            _ => 0.1,
+        };
+        let bits = w as f64 * h as f64 * self.fps as f64 * bpp;
+        ((bits / 1_000_000.0).round() as u32).clamp(2, 120)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -72,6 +113,7 @@ impl Default for Config {
             shortcuts: Shortcuts::default(),
             look: Look::default(),
             text: TextSettings::default(),
+            recording: Recording::default(),
             saving: Saving::default(),
         }
     }

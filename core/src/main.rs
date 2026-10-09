@@ -26,12 +26,16 @@ mod livetext;
 mod ocr;
 mod output;
 mod overlay;
+mod notify;
+mod recorder;
+mod recui;
 mod theme;
 
 use windows::core::{w, HSTRING};
 use windows::Win32::Foundation::*;
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::Memory::{CreateFileMappingW, MapViewOfFile, OpenFileMappingW, UnmapViewOfFile, FILE_MAP_READ, FILE_MAP_WRITE, PAGE_READWRITE};
 use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::HiDpi::{
     SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
@@ -49,34 +53,47 @@ const REMOTE_QUIT: usize = 0;
 const REMOTE_RELOAD: usize = 99;
 const REMOTE_CLOSE: usize = 98;
 
-fn responsive_core() -> Option<HWND> {
-    let me = std::process::id();
-    let mut after: Option<HWND> = None;
+const SHARED_NAME: windows::core::PCWSTR = w!(r"Local\FastSnip.CoreWindow");
+
+/// The running core writes its window handle here; a second launch reads it.
+/// (Searching windows by class can trip over a process that is stuck exiting.)
+fn publish_core(hwnd: HWND) -> Option<HANDLE> {
     unsafe {
-        while let Ok(h) = FindWindowExW(Some(HWND_MESSAGE), after, MAIN_CLASS, None) {
-            after = Some(h);
-            let mut pid = 0u32;
-            GetWindowThreadProcessId(h, Some(&mut pid));
-            if pid == me {
-                continue;
+        let h = match CreateFileMappingW(INVALID_HANDLE_VALUE, None, PAGE_READWRITE, 0, 8, SHARED_NAME) {
+            Ok(h) => h,
+            Err(e) => {
+                overlay::log(&format!("couldn't publish core window: {e}"));
+                return None;
             }
-            let mut res = 0usize;
-            if SendMessageTimeoutW(
-                h,
-                WM_NULL,
-                WPARAM(0),
-                LPARAM(0),
-                SMTO_ABORTIFHUNG | SMTO_BLOCK,
-                200,
-                Some(&mut res),
-            )
-            .0 != 0
-            {
-                return Some(h);
-            }
+        };
+        let view = MapViewOfFile(h, FILE_MAP_WRITE, 0, 0, 8);
+        if view.Value.is_null() {
+            overlay::log("couldn't map core window record");
+            return None;
         }
+        *(view.Value as *mut i64) = hwnd.0 as i64;
+        let _ = UnmapViewOfFile(view);
+        Some(h)
     }
-    None
+}
+
+fn responsive_core() -> Option<HWND> {
+    unsafe {
+        let h = match OpenFileMappingW(FILE_MAP_READ.0, false, SHARED_NAME) {
+            Ok(h) => h,
+            Err(_) => return None,
+        };
+        let view = MapViewOfFile(h, FILE_MAP_READ, 0, 0, 8);
+        let hwnd = if view.Value.is_null() { None } else { Some(HWND(*(view.Value as *const i64) as *mut _)) };
+        if !view.Value.is_null() {
+            let _ = UnmapViewOfFile(view);
+        }
+        let _ = CloseHandle(h);
+        let hwnd = hwnd?;
+        let mut res = 0usize;
+        let ok = SendMessageTimeoutW(hwnd, WM_NULL, WPARAM(0), LPARAM(0), SMTO_ABORTIFHUNG | SMTO_BLOCK, 300, Some(&mut res)).0 != 0;
+        ok.then_some(hwnd)
+    }
 }
 
 fn arg_action() -> Option<usize> {
@@ -104,6 +121,8 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                 let cfg = Config::load();
                 hotkey::set_bindings(&cfg.shortcuts);
                 overlay::with(|o| o.apply_config(&cfg));
+                recui::apply_config(&cfg);
+                notify::apply_config(&cfg);
                 return LRESULT(0);
             }
             if msg == WM_REMOTE && wp.0 == REMOTE_CLOSE {
@@ -120,7 +139,19 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             output::clipboard_add_png(hwnd, &ready.png);
             if let Some(p) = &ready.path {
                 overlay::log(&format!("saved {}", p.display()));
+                notify::screenshot_saved(ready.image.clone(), p);
             }
+            LRESULT(0)
+        }
+        recorder::WM_REC_DONE => {
+            let done = Box::from_raw(lp.0 as *mut recorder::Done);
+            recui::on_done(*done);
+            overlay::with(|o| o.resume_dup());
+            LRESULT(0)
+        }
+        notify::WM_TEXT_COPIED => {
+            let b = Box::from_raw(lp.0 as *mut (String, usize));
+            notify::on_text(hwnd, b.0, b.1);
             LRESULT(0)
         }
         ocr::WM_OCR => {
@@ -164,6 +195,25 @@ fn main() {
         }
         return;
     }
+    if std::env::args().nth(1).as_deref() == Some("--bench-rec") {
+        let out = std::env::temp_dir().join("fastsnip-bench.mp4");
+        let mons = capture::monitors();
+        let m = mons.iter().find(|m| m.primary).unwrap_or(&mons[0]);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let ctl = recorder::start_with(
+            recorder::Settings { area: m.rect, fps: 60, mbps: 16, mic: true, system_audio: true, cursor: true, out: out.clone() },
+            move |d| {
+                let _ = tx.send(d);
+            },
+        );
+        ctl.go.store(true, std::sync::atomic::Ordering::SeqCst);
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        ctl.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        let d = rx.recv().unwrap();
+        let size = std::fs::metadata(&out).map(|m| m.len()).unwrap_or(0);
+        eprintln!("rec: {:?} err={:?} {:.1}s {} KB", d.path, d.error, d.seconds, size / 1024);
+        return;
+    }
     if std::env::args().nth(1).as_deref() == Some("--bench-ocr") {
         let f = capture::grab().expect("grab");
         let r = f.bounds;
@@ -183,7 +233,16 @@ fn main() {
     // treated as dead, so a stuck process can never block FastSnip from starting.
     let _mutex = unsafe { CreateMutexW(None, true, w!(r"Local\FastSnip.Core")) };
     if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
-        if let Some(existing) = responsive_core() {
+        // A core that is still starting may not have published itself yet: wait a little.
+        let mut found = responsive_core();
+        for _ in 0..10 {
+            if found.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            found = responsive_core();
+        }
+        if let Some(existing) = found {
             if let Some(a) = action {
                 unsafe {
                     let _ = PostMessageW(Some(existing), WM_REMOTE, WPARAM(a), LPARAM(0));
@@ -229,7 +288,10 @@ fn main() {
         .expect("main window")
     };
 
+    let _shared = publish_core(main);
     overlay::register_class();
+    recui::install(main, &cfg);
+    notify::install(main, &cfg);
     match Overlay::new(main, &cfg) {
         Ok(o) => overlay::install(o),
         Err(e) => {
