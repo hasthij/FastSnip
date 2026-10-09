@@ -16,6 +16,7 @@
         <TextBlock TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                    Text="Icons: Lucide (ISC license). Text recognition: Windows.Media.Ocr and Windows AI Text Recognizer. Drawing: Win2D." />
         <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Content="Open screenshots folder" Click="OpenShots_Click" />
             <Button Content="Open settings folder" Click="OpenConfig_Click" />
             <Button Content="Run setup again" Click="Setup_Click" />
         </StackPanel>

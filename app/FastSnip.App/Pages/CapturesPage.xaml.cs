@@ -13,21 +13,21 @@ public sealed partial class CapturesPage : Page
     private List<CaptureItem> _all = new();
     private FileSystemWatcher? _shots, _videos;
 
+    private bool _loaded;
+
     public CapturesPage()
     {
         InitializeComponent();
+        // Keep the page (and its previews) alive between visits: switching back is instant.
+        NavigationCacheMode = NavigationCacheMode.Required;
     }
 
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
+        if (_loaded) return;
+        _loaded = true;
         Reload();
         Watch();
-    }
-
-    protected override void OnNavigatedFrom(NavigationEventArgs e)
-    {
-        _shots?.Dispose();
-        _videos?.Dispose();
     }
 
     private void Watch()
@@ -46,11 +46,17 @@ public sealed partial class CapturesPage : Page
         _videos = Make(Captures.RecordingsDir(App.Settings), "*.mp4");
     }
 
+    private readonly Dictionary<string, CaptureItem> _known = new();
+
     private void Reload()
     {
-        _all = Captures.List(App.Settings);
+        // Keep items (and their loaded previews) that are still there.
+        var fresh = Captures.List(App.Settings);
+        _all = fresh.Select(i => _known.TryGetValue(i.Path, out var old) ? old : i).ToList();
+        _known.Clear();
+        foreach (var i in _all) _known[i.Path] = i;
         Apply();
-        foreach (var item in _all.Take(200)) _ = LoadThumb(item);
+        foreach (var item in _all.Where(i => i.Thumb == null).Take(300)) _ = LoadThumb(item);
     }
 
     private Task LoadThumb(CaptureItem item) => Captures.LoadThumbAsync(item);
@@ -92,6 +98,13 @@ public sealed partial class CapturesPage : Page
 
     private void Record_Click(object sender, RoutedEventArgs e) => Core.Record();
 
+    private async void OpenFolder_Click(object sender, RoutedEventArgs e)
+    {
+        var dir = Captures.ScreenshotsDir(App.Settings);
+        Directory.CreateDirectory(dir);
+        await Windows.System.Launcher.LaunchFolderPathAsync(dir);
+    }
+
     private void Grid_ItemClick(object sender, ItemClickEventArgs e)
     {
         if (e.ClickedItem is CaptureItem item) App.Window?.OpenInEditor(item.Path);
@@ -124,10 +137,13 @@ public sealed partial class CapturesPage : Page
                 Clipboard.SetContent(dp);
                 return Task.CompletedTask;
             });
-        Add("Show in folder", "", () =>
+        Add("Show in folder", "", async () =>
         {
-            System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{item.Path}\"");
-            return Task.CompletedTask;
+            // Opens the user's file manager with the capture selected.
+            var file = await StorageFile.GetFileFromPathAsync(item.Path);
+            var opts = new Windows.System.FolderLauncherOptions();
+            opts.ItemsToSelect.Add(file);
+            await Windows.System.Launcher.LaunchFolderPathAsync(Path.GetDirectoryName(item.Path)!, opts);
         });
         menu.Items.Add(new MenuFlyoutSeparator());
         Add("Delete", "", async () =>

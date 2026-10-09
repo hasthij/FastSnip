@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FastSnip MSIX package. Holds the app window (FastSnip.App.exe) and the core
+  (fastsnip.exe), with .NET and the Windows App SDK inside, so nothing else
+  needs installing. Version and Publisher are set by packaging\build.ps1.
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap3 uap5 desktop rescap">
+
+  <Identity Name="FastSnip" Publisher="CN=FastSnip Dev" Version="0.1.0.0" />
+
+  <Properties>
+    <DisplayName>FastSnip</DisplayName>
+    <PublisherDisplayName>FastSnip</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+    <Description>Screenshots, screen recordings and text from your screen, opened in a single frame.</Description>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Applications>
+    <!-- The window: Start menu entry, gallery, editor, settings. -->
+    <Application Id="App" Executable="FastSnip.App.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="FastSnip"
+        Description="Screenshots, screen recordings and text from your screen."
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" />
+        <uap:SplashScreen Image="Assets\SplashScreen.png" />
+      </uap:VisualElements>
+      <Extensions>
+        <!-- Declared on this app so its settings can turn it on and off; it starts the core. -->
+        <uap5:Extension Category="windows.startupTask" Executable="fastsnip.exe" EntryPoint="Windows.FullTrustApplication">
+          <uap5:StartupTask TaskId="FastSnipStartup" Enabled="true" DisplayName="FastSnip" />
+        </uap5:Extension>
+      </Extensions>
+    </Application>
+
+    <!-- The core: shortcuts, overlay, capture, recording. No Start menu entry. -->
+    <Application Id="Core" Executable="fastsnip.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="FastSnip core"
+        Description="Keeps FastSnip's shortcuts ready."
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png"
+        AppListEntry="none" />
+      <Extensions>
+        <uap3:Extension Category="windows.appExecutionAlias">
+          <uap3:AppExecutionAlias>
+            <desktop:ExecutionAlias Alias="fastsnip.exe" />
+          </uap3:AppExecutionAlias>
+        </uap3:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+    <DeviceCapability Name="microphone" />
+  </Capabilities>
+</Package>

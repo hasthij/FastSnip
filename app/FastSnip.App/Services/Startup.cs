@@ -22,6 +22,19 @@ public static class Startup
 
     public static async Task<bool> IsOnAsync()
     {
+        try { return await IsOnCore(); }
+        catch { return false; }
+    }
+
+    /// Returns the resulting state. Never throws: a failure just reports "off".
+    public static async Task<bool> SetAsync(bool on)
+    {
+        try { return await SetCore(on); }
+        catch { return false; }
+    }
+
+    private static async Task<bool> IsOnCore()
+    {
         if (Packaged)
         {
             var t = await Windows.ApplicationModel.StartupTask.GetAsync(TaskId);
@@ -31,8 +44,7 @@ public static class Startup
         return k?.GetValue("FastSnip") != null;
     }
 
-    /// Returns the resulting state (Windows may refuse if the user turned it off in Task Manager).
-    public static async Task<bool> SetAsync(bool on)
+    private static async Task<bool> SetCore(bool on)
     {
         if (Packaged)
         {

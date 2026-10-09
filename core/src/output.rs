@@ -215,7 +215,22 @@ pub fn clipboard_set_text(owner: HWND, text: &str) -> bool {
 }
 
 /// Encode and save on a worker thread, then notify `notify` with WM_PNG_READY.
-pub fn save_async(img: std::sync::Arc<Image>, dir: PathBuf, notify: HWND) {
+/// Where the text of each screenshot is kept for search in the gallery
+/// (%LOCALAPPDATA%\FastSnip	ext\<file name>.txt), out of the user's folders.
+pub fn text_dir() -> PathBuf {
+    std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(".")).join("FastSnip").join("text")
+}
+
+/// What to do about the screenshot's text after saving.
+pub enum TextIndex {
+    /// Already read (from the freeze-time pass).
+    Known(String),
+    /// Read it on the save thread.
+    Read,
+    Skip,
+}
+
+pub fn save_async(img: std::sync::Arc<Image>, dir: PathBuf, notify: HWND, text: TextIndex) {
     let target = notify.0 as isize;
     PENDING.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     std::thread::spawn(move || {
@@ -226,7 +241,7 @@ pub fn save_async(img: std::sync::Arc<Image>, dir: PathBuf, notify: HWND) {
         let _ = std::fs::create_dir_all(&dir);
         let path = unique_path(&dir, &timestamp_name("Screenshot", "png"));
         let saved = std::fs::write(&path, &png).is_ok().then_some(path);
-        let msg = Box::new(PngReady { png, path: saved, image: img });
+        let msg = Box::new(PngReady { png, path: saved.clone(), image: img.clone() });
         unsafe {
             let _ = PostMessageW(
                 Some(HWND(target as *mut _)),
@@ -234,6 +249,33 @@ pub fn save_async(img: std::sync::Arc<Image>, dir: PathBuf, notify: HWND) {
                 WPARAM(0),
                 LPARAM(Box::into_raw(msg) as isize),
             );
+        }
+        // Index the text after the user already has the file.
+        let Some(path) = saved else { return };
+        let text = match text {
+            TextIndex::Known(t) => t,
+            TextIndex::Read => {
+                let job = crate::ocr::Job {
+                    seq: 0,
+                    kind: crate::ocr::Kind::Region,
+                    origin: (0, 0),
+                    w: img.w,
+                    h: img.h,
+                    bgra: img.bgra.clone(),
+                    upscale: false,
+                };
+                let mut words = crate::ocr::read_now(&job);
+                crate::ocr::sort_reading(&mut words);
+                crate::ocr::join(&words, true)
+            }
+            TextIndex::Skip => return,
+        };
+        if !text.trim().is_empty() {
+            let dir = text_dir();
+            let _ = std::fs::create_dir_all(&dir);
+            if let Some(name) = path.file_name() {
+                let _ = std::fs::write(dir.join(format!("{}.txt", name.to_string_lossy())), text);
+            }
         }
     });
 }

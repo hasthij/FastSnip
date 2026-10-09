@@ -17,12 +17,19 @@ namespace FastSnip.App.Pages;
 public sealed partial class SettingsPage : Page
 {
     private bool _loading = true;
+    private bool _didLoad;
     private Config C => App.Settings;
 
     public SettingsPage()
     {
         InitializeComponent();
-        Loaded += async (_, _) => await LoadAll();
+        NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
+        Loaded += async (_, _) =>
+        {
+            if (_didLoad) return;
+            _didLoad = true;
+            await LoadAll();
+        };
     }
 
     private static void Select(ComboBox box, string tag)

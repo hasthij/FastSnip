@@ -12,6 +12,26 @@ namespace FastSnip.App.Services;
 public sealed class Config
 {
     public static string Dir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "FastSnip");
+
+    /// Where the settings file really is on disk. Inside the MSIX, AppData is
+    /// redirected to the package's own folder, which Explorer can't follow.
+    public static string RealDir
+    {
+        get
+        {
+            try
+            {
+                var cache = Windows.Storage.ApplicationData.Current.LocalCacheFolder.Path;
+                var p = Path.Combine(cache, "Roaming", "FastSnip");
+                if (Directory.Exists(p)) return p;
+            }
+            catch
+            {
+                // Not packaged.
+            }
+            return Dir;
+        }
+    }
     public static string FilePath => Path.Combine(Dir, "config.toml");
 
     private readonly List<(string Section, List<(string Key, object Value)> Items)> _sections = new();

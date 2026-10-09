@@ -84,15 +84,27 @@ public static class Captures
         return d.ToString(d.Year == today.Year ? "MMMM d" : "MMMM d, yyyy");
     }
 
+    // A few at a time, so a big folder never makes the window stutter.
+    private static readonly SemaphoreSlim Gate = new(3);
+
     public static async Task LoadThumbAsync(CaptureItem item)
     {
+        await Gate.WaitAsync();
         try
         {
             var file = await StorageFile.GetFileFromPathAsync(item.Path);
-            using var thumb = await file.GetThumbnailAsync(ThumbnailMode.SingleItem, 320, ThumbnailOptions.ResizeThumbnail);
-            if (thumb == null) return;
-            var bmp = new BitmapImage();
-            await bmp.SetSourceAsync(thumb);
+            var bmp = new BitmapImage { DecodePixelWidth = 400 };
+            if (item.IsVideo)
+            {
+                using var thumb = await file.GetThumbnailAsync(ThumbnailMode.VideosView, 400, ThumbnailOptions.ResizeThumbnail);
+                if (thumb != null) await bmp.SetSourceAsync(thumb);
+            }
+            else
+            {
+                // Decode the PNG itself, shrunk while decoding: a real preview, not the shell's file icon.
+                using var stream = await file.OpenReadAsync();
+                await bmp.SetSourceAsync(stream);
+            }
             item.Thumb = bmp;
             if (item.IsVideo)
             {
@@ -109,6 +121,10 @@ public static class Captures
         catch
         {
             // A file that can't be read just shows without a thumbnail.
+        }
+        finally
+        {
+            Gate.Release();
         }
     }
 

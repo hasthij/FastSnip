@@ -1298,6 +1298,14 @@ impl Overlay {
 
     /// Cut the image from the frozen frame, put it on the clipboard, save it.
     fn deliver(&mut self, t: Target) {
+        let area = match &t {
+            Target::Area(r) => *r,
+            Target::Shape(pts) => {
+                let (minx, maxx) = pts.iter().fold((i32::MAX, i32::MIN), |a, p| (a.0.min(p.0), a.1.max(p.0)));
+                let (miny, maxy) = pts.iter().fold((i32::MAX, i32::MIN), |a, p| (a.0.min(p.1), a.1.max(p.1)));
+                Rect { x: minx, y: miny, w: maxx - minx, h: maxy - miny }
+            }
+        };
         let Some(frame) = &self.frame else { return };
         let img = match t {
             Target::Area(r) => frame.crop(&r).map(|(r, px)| Image {
@@ -1336,7 +1344,17 @@ impl Overlay {
             "clipboard in {:.1} ms",
             t0.elapsed().as_secs_f64() * 1000.0
         ));
-        output::save_async(img, self.shots_dir.clone(), self.main);
+        // Text for gallery search: reuse the freeze-time read when it's done.
+        let index = if !self.read_on_freeze {
+            output::TextIndex::Skip
+        } else if self.ocr_pending == 0 && !self.ocr_words.is_empty() {
+            let mut words = ocr::words_in(&self.ocr_words, &area);
+            ocr::sort_reading(&mut words);
+            output::TextIndex::Known(ocr::join(&words, true))
+        } else {
+            output::TextIndex::Read
+        };
+        output::save_async(img, self.shots_dir.clone(), self.main, index);
     }
 
     // ---------------------------------------------------------------- toolbar layout
@@ -2053,8 +2071,24 @@ fn open_app() {
 /// Start the app window with arguments, e.g. `--edit <file>`.
 pub fn open_app_with(args: &[&str]) {
     if let Ok(exe) = std::env::current_exe() {
-        for name in ["FastSnip.App.exe", "app\\FastSnip.App.exe"] {
-            let app = exe.with_file_name(name);
+        let dir = exe.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+        let mut candidates = vec![dir.join("FastSnip.App.exe"), dir.join("app").join("FastSnip.App.exe")];
+        // Development: core\target\release sits next to app\FastSnip.App\bin.
+        if let Some(root) = dir.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
+            for cfg in ["Release", "Debug"] {
+                candidates.push(
+                    root.join("app")
+                        .join("FastSnip.App")
+                        .join("bin")
+                        .join("x64")
+                        .join(cfg)
+                        .join("net10.0-windows10.0.22621.0")
+                        .join("win-x64")
+                        .join("FastSnip.App.exe"),
+                );
+            }
+        }
+        for app in candidates {
             if app.exists() {
                 let _ = std::process::Command::new(app).args(args).spawn();
                 return;

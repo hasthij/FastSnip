@@ -74,6 +74,7 @@ public sealed partial class EditorPage : Page
     public EditorPage()
     {
         InitializeComponent();
+        NavigationCacheMode = NavigationCacheMode.Required;
         foreach (var c in SwatchColors)
         {
             var b = new Button
@@ -102,6 +103,8 @@ public sealed partial class EditorPage : Page
     {
         var file = PendingFile ?? _lastFile;
         PendingFile = null;
+        // Same file still open (the page is cached): nothing to reload.
+        if (file != null && file == _path && (ImageEditor.Visibility == Visibility.Visible || VideoEditor.Visibility == Visibility.Visible)) return;
         if (file == null || !File.Exists(file))
         {
             EmptyState.Visibility = Visibility.Visible;

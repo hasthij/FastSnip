@@ -14,7 +14,9 @@
     <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
     <UseWinUI>true</UseWinUI>
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
-    <WindowsPackageType>None</WindowsPackageType>
+    <!-- None for development runs; packaging/build.ps1 builds the MSIX. -->
+    <WindowsPackageType Condition="'$(WindowsPackageType)' == ''">None</WindowsPackageType>
+    <EnableMsixTooling>true</EnableMsixTooling>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <SelfContained>true</SelfContained>
     <Nullable>enable</Nullable>
@@ -24,10 +26,13 @@
     <Version>0.1.0</Version>
     <Product>FastSnip</Product>
     <Copyright>GPL-3.0-or-later</Copyright>
+    <CoreExe>$(MSBuildThisFileDirectory)..\..\core\target\release\fastsnip.exe</CoreExe>
   </PropertyGroup>
 
   <ItemGroup>
     <Content Include="Assets\**" CopyToOutputDirectory="PreserveNewest" />
+    <!-- The Rust core ships next to the app. -->
+    <Content Include="$(CoreExe)" Link="fastsnip.exe" CopyToOutputDirectory="PreserveNewest" Condition="Exists('$(CoreExe)')" />
   </ItemGroup>
 
   <ItemGroup>
