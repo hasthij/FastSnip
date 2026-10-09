@@ -1,0 +1,1464 @@
+//! The frozen-screen overlay: one borderless topmost window per monitor that
+//! shows the grabbed frame, the toolbar (layout B from the design spec, with
+//! key hints), the selection for each capture shape, and the loupe.
+//!
+//! The toolbar is drawn into the overlay, never onto the real screen, and
+//! every capture is cut from the frozen frame, so it can't show up in a shot.
+
+use std::cell::RefCell;
+use std::path::PathBuf;
+use std::time::Instant;
+
+use windows::core::{w, Interface, HSTRING};
+use windows::Win32::Foundation::*;
+use windows::Win32::Graphics::Direct2D::Common::*;
+use windows::Win32::Graphics::Direct2D::*;
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::Input::KeyboardAndMouse::*;
+use windows::Win32::UI::WindowsAndMessaging::*;
+use windows_numerics::Matrix3x2;
+
+use crate::capture::{self, Frame, Monitor, Rect, WinInfo};
+use crate::config::Config;
+use crate::dup::Dup;
+use crate::element::{self, Finder};
+use crate::gfx::{rf, Gfx, Surface};
+use crate::hotkey::Action;
+use crate::output::{self, Image};
+use crate::theme::{self, with_alpha, Palette};
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Intent {
+    Snip,
+    Record,
+    Text,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Shape {
+    Rect,
+    Window,
+    Element,
+    Free,
+    Full,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Btn {
+    Intent(Intent),
+    Shape(Shape),
+    Mic,
+    Audio,
+    OpenApp,
+    Close,
+}
+
+const SHAPES: [(Shape, &str, &str); 5] = [
+    (Shape::Rect, "square-dashed", "1"),
+    (Shape::Window, "app-window", "2"),
+    (Shape::Element, "scan", "3"),
+    (Shape::Free, "lasso", "4"),
+    (Shape::Full, "monitor", "5"),
+];
+
+struct Drag {
+    start: (i32, i32),
+    pts: Vec<(i32, i32)>,
+    mon: usize,
+}
+
+struct OvWin {
+    hwnd: HWND,
+    mon: Monitor,
+    surf: Option<Surface>,
+    frozen: Option<ID2D1Bitmap1>,
+}
+
+/// What a click or drag selected.
+enum Target {
+    Area(Rect),
+    Shape(Vec<(i32, i32)>),
+}
+
+pub struct Overlay {
+    gfx: Gfx,
+    dup: Option<Dup>,
+    wins: Vec<OvWin>,
+    pub visible: bool,
+    frame: Option<Frame>,
+    snapshot: Vec<WinInfo>,
+    intent: Intent,
+    shape: Shape,
+    mouse: (i32, i32),
+    drag: Option<Drag>,
+    hover: Option<Btn>,
+    pressed: Option<Btn>,
+    tb_mon: usize,
+    full_mon: Option<usize>,
+    element: Option<(Rect, String)>,
+    elem_seq: u64,
+    finder: Finder,
+    mic: bool,
+    audio: bool,
+    palette: Palette,
+    magnifier: bool,
+    shots_dir: PathBuf,
+    dash: Option<ID2D1StrokeStyle>,
+    notice: Option<String>,
+    main: HWND,
+    opened_at: Option<Instant>,
+}
+
+thread_local! {
+    static OV: RefCell<Option<Overlay>> = const { RefCell::new(None) };
+}
+
+/// Run `f` on the overlay unless it's already borrowed (re-entrant window messages).
+pub fn with<R>(f: impl FnOnce(&mut Overlay) -> R) -> Option<R> {
+    OV.with(|c| c.try_borrow_mut().ok().and_then(|mut o| o.as_mut().map(f)))
+}
+
+pub fn install(o: Overlay) {
+    OV.with(|c| *c.borrow_mut() = Some(o));
+}
+
+pub fn uninstall() {
+    let o = OV.with(|c| c.borrow_mut().take());
+    if let Some(mut o) = o {
+        o.close();
+        for w in o.wins.drain(..) {
+            unsafe {
+                let _ = DestroyWindow(w.hwnd);
+            }
+        }
+        drop(o);
+    }
+}
+
+const CLASS: windows::core::PCWSTR = w!("FastSnipOverlay");
+
+pub fn register_class() {
+    unsafe {
+        let hinst = GetModuleHandleW(None).unwrap_or_default();
+        let wc = WNDCLASSEXW {
+            cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+            style: CS_DBLCLKS,
+            lpfnWndProc: Some(wndproc),
+            hInstance: hinst.into(),
+            hCursor: LoadCursorW(None, IDC_CROSS).unwrap_or_default(),
+            lpszClassName: CLASS,
+            ..Default::default()
+        };
+        RegisterClassExW(&wc);
+    }
+}
+
+fn lparam_xy(l: LPARAM) -> (i32, i32) {
+    (
+        (l.0 & 0xFFFF) as i16 as i32,
+        ((l.0 >> 16) & 0xFFFF) as i16 as i32,
+    )
+}
+
+unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    let handled = with(|o| o.on_message(hwnd, msg, wp, lp)).flatten();
+    match handled {
+        Some(r) => r,
+        None => DefWindowProcW(hwnd, msg, wp, lp),
+    }
+}
+
+impl Overlay {
+    pub fn new(main: HWND, cfg: &Config) -> windows::core::Result<Self> {
+        let gfx = Gfx::new()?;
+        let dash = gfx.dash_style();
+        let dup = Dup::new(&gfx.d3d).ok();
+        if dup.is_none() {
+            log("desktop duplication unavailable, using GDI grab");
+        }
+        let mut o = Self {
+            gfx,
+            dup,
+            wins: Vec::new(),
+            visible: false,
+            frame: None,
+            snapshot: Vec::new(),
+            intent: Intent::Snip,
+            shape: Shape::Rect,
+            mouse: (0, 0),
+            drag: None,
+            hover: None,
+            pressed: None,
+            tb_mon: 0,
+            full_mon: None,
+            element: None,
+            elem_seq: 0,
+            finder: Finder::start(main),
+            mic: true,
+            audio: true,
+            palette: theme::palette(&cfg.look.accent, &cfg.look.theme),
+            magnifier: cfg.look.magnifier,
+            shots_dir: output::screenshots_dir(&cfg.saving.screenshots_dir),
+            dash,
+            notice: None,
+            main,
+            opened_at: None,
+        };
+        // Pre-create the windows and swap chains, and draw once so fonts and
+        // icons are cached: the first open is as fast as every later one.
+        o.sync_windows();
+        o.render_all();
+        Ok(o)
+    }
+
+    pub fn apply_config(&mut self, cfg: &Config) {
+        self.palette = theme::palette(&cfg.look.accent, &cfg.look.theme);
+        self.magnifier = cfg.look.magnifier;
+        self.shots_dir = output::screenshots_dir(&cfg.saving.screenshots_dir);
+    }
+
+    /// Make one overlay window per monitor, matching current monitor rects.
+    fn sync_windows(&mut self) {
+        let mons = capture::monitors();
+        let same = mons.len() == self.wins.len()
+            && mons
+                .iter()
+                .zip(&self.wins)
+                .all(|(m, w)| m.rect == w.mon.rect && m.dpi == w.mon.dpi);
+        if same {
+            return;
+        }
+        for w in self.wins.drain(..) {
+            unsafe {
+                let _ = DestroyWindow(w.hwnd);
+            }
+        }
+        let hinst = unsafe { GetModuleHandleW(None).unwrap_or_default() };
+        for m in mons {
+            let hwnd = unsafe {
+                CreateWindowExW(
+                    WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP,
+                    CLASS,
+                    &HSTRING::from("FastSnip"),
+                    WS_POPUP,
+                    m.rect.x,
+                    m.rect.y,
+                    m.rect.w,
+                    m.rect.h,
+                    None,
+                    None,
+                    Some(hinst.into()),
+                    None,
+                )
+            };
+            let Ok(hwnd) = hwnd else { continue };
+            let Ok(surf) = self.gfx.surface(hwnd, m.rect.w as u32, m.rect.h as u32) else {
+                continue;
+            };
+            self.wins.push(OvWin {
+                hwnd,
+                mon: m,
+                surf: Some(surf),
+                frozen: None,
+            });
+        }
+    }
+
+    pub fn displays_changed(&mut self) {
+        if let Some(d) = &mut self.dup {
+            d.reset();
+        }
+        self.sync_windows();
+    }
+
+    fn mon_at(&self, x: i32, y: i32) -> usize {
+        self.wins
+            .iter()
+            .position(|w| w.mon.rect.contains(x, y))
+            .unwrap_or(0)
+    }
+
+    // ---------------------------------------------------------------- open / close
+
+    pub fn on_action(&mut self, a: Action) {
+        match a {
+            Action::OpenToolbar => self.open(Intent::Snip, None),
+            Action::GrabText => self.open(Intent::Text, Some(Shape::Rect)),
+            Action::RecordFullScreen => self.open(Intent::Record, Some(Shape::Full)),
+            Action::SnipFullScreen => self.snip_full_screen_now(),
+        }
+    }
+
+    /// Full screen shot of the display under the mouse, no overlay at all.
+    fn snip_full_screen_now(&mut self) {
+        let Some(frame) = capture::grab() else { return };
+        let mut p = POINT::default();
+        unsafe {
+            let _ = GetCursorPos(&mut p);
+        }
+        let mons = capture::monitors();
+        let r = mons
+            .iter()
+            .find(|m| m.rect.contains(p.x, p.y))
+            .map(|m| m.rect)
+            .unwrap_or(frame.bounds);
+        self.frame = Some(frame);
+        self.deliver(Target::Area(r));
+        self.frame = None;
+    }
+
+    pub fn open(&mut self, intent: Intent, shape: Option<Shape>) {
+        if self.visible {
+            if intent != self.intent {
+                self.intent = intent;
+                self.render_all();
+            }
+            return;
+        }
+        let t0 = Instant::now();
+        // Freeze first: GPU copy of every monitor (~1-2 ms), GDI as fallback.
+        let shots = self.dup.as_mut().map(|d| d.grab()).unwrap_or_default();
+        let t_grab = t0.elapsed();
+        self.sync_windows();
+        let gpu_ok = !shots.is_empty()
+            && self
+                .wins
+                .iter()
+                .all(|w| shots.iter().any(|s| s.rect == w.mon.rect));
+        let mut cpu_frame = None;
+        if gpu_ok {
+            for w in &mut self.wins {
+                let shot = shots.iter().find(|s| s.rect == w.mon.rect).unwrap();
+                w.frozen = self.gfx.bitmap_from_texture(&shot.tex).ok();
+            }
+        } else {
+            let Some(frame) = capture::grab() else { return };
+            let stride = frame.bounds.w as u32 * 4;
+            for w in &mut self.wins {
+                let ox = (w.mon.rect.x - frame.bounds.x) as usize;
+                let oy = (w.mon.rect.y - frame.bounds.y) as usize;
+                let off = oy * stride as usize + ox * 4;
+                let ptr = unsafe { frame.pixels.as_ptr().add(off) };
+                w.frozen = self
+                    .gfx
+                    .bitmap(ptr, w.mon.rect.w as u32, w.mon.rect.h as u32, stride)
+                    .ok();
+            }
+            cpu_frame = Some(frame);
+        }
+        self.snapshot = capture::windows(std::process::id());
+        let t_snap = t0.elapsed();
+        let mut p = POINT::default();
+        unsafe {
+            let _ = GetCursorPos(&mut p);
+        }
+        self.mouse = (p.x, p.y);
+        self.tb_mon = self.mon_at(p.x, p.y);
+        self.full_mon = None;
+        self.intent = intent;
+        if let Some(s) = shape {
+            self.shape = s;
+        }
+        self.drag = None;
+        self.hover = None;
+        self.pressed = None;
+        self.element = None;
+        self.notice = None;
+        self.frame = cpu_frame;
+        let t_upload = t0.elapsed();
+        self.visible = true;
+        self.opened_at = Some(t0);
+        self.render_all();
+        let t_render = t0.elapsed();
+        for w in &self.wins {
+            unsafe {
+                let _ = SetWindowPos(
+                    w.hwnd,
+                    Some(HWND_TOPMOST),
+                    w.mon.rect.x,
+                    w.mon.rect.y,
+                    w.mon.rect.w,
+                    w.mon.rect.h,
+                    SWP_SHOWWINDOW | SWP_NOACTIVATE,
+                );
+            }
+        }
+        let t_show = t0.elapsed();
+        if let Some(w) = self.wins.get(self.tb_mon) {
+            force_foreground(w.hwnd);
+        }
+        let t_visible = t0.elapsed();
+        // CPU copy for saving and the color picker, while the overlay is already up.
+        if self.frame.is_none() {
+            if let Some(d) = &mut self.dup {
+                self.frame = d.readback(&shots, capture::virtual_screen());
+            }
+        }
+        let t_read = t0.elapsed();
+        let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
+        log(&format!(
+            "overlay visible in {:.1} ms (grab {:.1} {}, windows {:.1}, setup {:.1}, render {:.1}, show {:.1}, focus {:.1}); pixels ready at {:.1} ms",
+            ms(t_visible),
+            ms(t_grab),
+            if gpu_ok { "gpu" } else { "gdi" },
+            ms(t_snap - t_grab),
+            ms(t_upload - t_snap),
+            ms(t_render - t_upload),
+            ms(t_show - t_render),
+            ms(t_visible - t_show),
+            ms(t_read)
+        ));
+        if self.shape == Shape::Element {
+            self.ask_element();
+        }
+    }
+
+    pub fn close(&mut self) {
+        if !self.visible {
+            return;
+        }
+        self.visible = false;
+        unsafe {
+            let _ = ReleaseCapture();
+        }
+        for w in &mut self.wins {
+            unsafe {
+                let _ = ShowWindow(w.hwnd, SW_HIDE);
+            }
+            w.frozen = None;
+        }
+        self.frame = None;
+        self.snapshot.clear();
+        self.drag = None;
+    }
+
+    // ---------------------------------------------------------------- messages
+
+    fn on_message(&mut self, hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> Option<LRESULT> {
+        let idx = self.wins.iter().position(|w| w.hwnd == hwnd)?;
+        let to_global =
+            |o: &Self, (x, y): (i32, i32)| (o.wins[idx].mon.rect.x + x, o.wins[idx].mon.rect.y + y);
+        match msg {
+            WM_MOUSEMOVE => {
+                let g = to_global(self, lparam_xy(lp));
+                self.on_move(g);
+                Some(LRESULT(0))
+            }
+            WM_LBUTTONDOWN => {
+                let g = to_global(self, lparam_xy(lp));
+                self.mouse = g;
+                if let Some(b) = self.btn_at(g) {
+                    self.pressed = Some(b);
+                } else if matches!(self.shape, Shape::Rect | Shape::Free) {
+                    self.drag = Some(Drag {
+                        start: g,
+                        pts: vec![g],
+                        mon: self.mon_at(g.0, g.1),
+                    });
+                    unsafe {
+                        SetCapture(hwnd);
+                    }
+                }
+                self.render_all();
+                Some(LRESULT(0))
+            }
+            WM_LBUTTONUP => {
+                let g = to_global(self, lparam_xy(lp));
+                self.on_up(g);
+                Some(LRESULT(0))
+            }
+            WM_RBUTTONUP => {
+                self.close();
+                Some(LRESULT(0))
+            }
+            WM_KEYDOWN | WM_SYSKEYDOWN => {
+                self.on_key(wp.0 as u32);
+                Some(LRESULT(0))
+            }
+            WM_SETCURSOR => {
+                let over_bar = self.btn_at(self.mouse).is_some() || self.in_toolbar(self.mouse);
+                unsafe {
+                    let c = LoadCursorW(None, if over_bar { IDC_ARROW } else { IDC_CROSS })
+                        .unwrap_or_default();
+                    SetCursor(Some(c));
+                }
+                Some(LRESULT(1))
+            }
+            WM_MOUSEACTIVATE => Some(LRESULT(MA_ACTIVATE as isize)),
+            WM_ERASEBKGND => Some(LRESULT(1)),
+            WM_PAINT => {
+                let mut ps = Default::default();
+                unsafe {
+                    windows::Win32::Graphics::Gdi::BeginPaint(hwnd, &mut ps);
+                    let _ = windows::Win32::Graphics::Gdi::EndPaint(hwnd, &ps);
+                }
+                if self.visible {
+                    self.render(idx);
+                }
+                Some(LRESULT(0))
+            }
+            WM_CLOSE => {
+                self.close();
+                Some(LRESULT(0))
+            }
+            _ => None,
+        }
+    }
+
+    pub fn on_element(&mut self, f: element::Found) {
+        if self.visible && self.shape == Shape::Element && f.seq == self.elem_seq {
+            self.element = Some((f.rect, f.label));
+            self.render_all();
+        }
+    }
+
+    fn ask_element(&mut self) {
+        let (x, y) = self.mouse;
+        if let Some(win) = self.snapshot.iter().find(|w| w.rect.contains(x, y)) {
+            self.elem_seq += 1;
+            self.finder.ask(element::Request {
+                seq: self.elem_seq,
+                window: win.hwnd,
+                x,
+                y,
+            });
+        }
+    }
+
+    fn on_move(&mut self, g: (i32, i32)) {
+        if g == self.mouse {
+            return;
+        }
+        self.mouse = g;
+        if let Some(d) = &mut self.drag {
+            let last = *d.pts.last().unwrap();
+            if (last.0 - g.0).abs() + (last.1 - g.1).abs() >= 2 {
+                d.pts.push(g);
+            }
+        } else {
+            self.hover = self.btn_at(g);
+            if self.shape == Shape::Element && self.hover.is_none() {
+                if let Some((r, _)) = &self.element {
+                    if !r.contains(g.0, g.1) {
+                        self.element = None;
+                    }
+                }
+                self.ask_element();
+            }
+            if self.shape == Shape::Full {
+                self.full_mon = None;
+            }
+        }
+        self.render_all();
+    }
+
+    fn on_up(&mut self, g: (i32, i32)) {
+        self.mouse = g;
+        if let Some(b) = self.pressed.take() {
+            if self.btn_at(g) == Some(b) {
+                self.activate(b);
+            }
+            if self.visible {
+                self.render_all();
+            }
+            return;
+        }
+        if let Some(d) = self.drag.take() {
+            unsafe {
+                let _ = ReleaseCapture();
+            }
+            let clip = self.wins[d.mon].mon.rect;
+            match self.shape {
+                Shape::Free => {
+                    let pts: Vec<(i32, i32)> = d
+                        .pts
+                        .iter()
+                        .map(|&(x, y)| {
+                            (
+                                x.clamp(clip.x, clip.right()),
+                                y.clamp(clip.y, clip.bottom()),
+                            )
+                        })
+                        .collect();
+                    let (minx, maxx) = pts
+                        .iter()
+                        .fold((i32::MAX, i32::MIN), |a, p| (a.0.min(p.0), a.1.max(p.0)));
+                    let (miny, maxy) = pts
+                        .iter()
+                        .fold((i32::MAX, i32::MIN), |a, p| (a.0.min(p.1), a.1.max(p.1)));
+                    if pts.len() >= 3 && maxx - minx >= 3 && maxy - miny >= 3 {
+                        self.finish(Target::Shape(pts));
+                        return;
+                    }
+                }
+                _ => {
+                    let r = Rect::from_points(d.start.0, d.start.1, g.0, g.1);
+                    if let Some(r) = r.intersect(&clip) {
+                        if r.w >= 3 && r.h >= 3 {
+                            self.finish(Target::Area(r));
+                            return;
+                        }
+                    }
+                }
+            }
+            self.render_all();
+            return;
+        }
+        if let Some(r) = self.click_target() {
+            self.finish(Target::Area(r));
+        }
+    }
+
+    /// Area a click takes in window, element and full screen modes.
+    fn click_target(&self) -> Option<Rect> {
+        let (x, y) = self.mouse;
+        match self.shape {
+            Shape::Window => self.hovered_window().map(|w| w.rect),
+            Shape::Element => self
+                .element
+                .as_ref()
+                .map(|e| e.0)
+                .or_else(|| self.hovered_window().map(|w| w.rect)),
+            Shape::Full => Some(
+                self.wins[self.full_mon.unwrap_or_else(|| self.mon_at(x, y))]
+                    .mon
+                    .rect,
+            ),
+            _ => None,
+        }
+        .and_then(|r| r.intersect(&capture::virtual_screen()))
+    }
+
+    fn hovered_window(&self) -> Option<&WinInfo> {
+        let (x, y) = self.mouse;
+        self.snapshot.iter().find(|w| w.rect.contains(x, y))
+    }
+
+    fn on_key(&mut self, vk: u32) {
+        let ctrl = unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0;
+        let shift = unsafe { GetKeyState(VK_SHIFT.0 as i32) } < 0;
+        match vk {
+            v if v == VK_ESCAPE.0 as u32 => return self.close(),
+            v if v == b'S' as u32 && !ctrl => self.intent = Intent::Snip,
+            v if v == b'R' as u32 => self.intent = Intent::Record,
+            v if v == b'T' as u32 => self.intent = Intent::Text,
+            v if (b'1' as u32..=b'5' as u32).contains(&v) => {
+                self.set_shape(SHAPES[(v - b'1' as u32) as usize].0)
+            }
+            v if v == b'M' as u32 && self.intent == Intent::Record => self.mic = !self.mic,
+            v if v == b'A' as u32 && self.intent == Intent::Record => self.audio = !self.audio,
+            v if v == b'O' as u32 => return self.activate(Btn::OpenApp),
+            v if v == b'C' as u32 => {
+                if let Some(px) = self
+                    .frame
+                    .as_ref()
+                    .and_then(|f| f.pixel(self.mouse.0, self.mouse.1))
+                {
+                    let hex = format!("#{:02X}{:02X}{:02X}", px[0], px[1], px[2]);
+                    output::clipboard_set_text(self.main, &hex);
+                    self.notice = Some(format!("Copied {hex}"));
+                }
+            }
+            v if v == VK_TAB.0 as u32 && self.shape == Shape::Full => {
+                let n = self.wins.len().max(1);
+                let cur = self
+                    .full_mon
+                    .unwrap_or_else(|| self.mon_at(self.mouse.0, self.mouse.1));
+                self.full_mon = Some(if shift {
+                    (cur + n - 1) % n
+                } else {
+                    (cur + 1) % n
+                });
+            }
+            v if v == VK_RETURN.0 as u32 => {
+                let r = match self.shape {
+                    Shape::Window | Shape::Element => self.click_target(),
+                    _ => {
+                        let i = self
+                            .full_mon
+                            .unwrap_or_else(|| self.mon_at(self.mouse.0, self.mouse.1));
+                        Some(self.wins[i].mon.rect)
+                    }
+                };
+                if let Some(r) = r {
+                    return self.finish(Target::Area(r));
+                }
+            }
+            v if (VK_LEFT.0 as u32..=VK_DOWN.0 as u32).contains(&v) => {
+                let step = if shift { 10 } else { 1 };
+                let (dx, dy) = match v {
+                    x if x == VK_LEFT.0 as u32 => (-step, 0),
+                    x if x == VK_RIGHT.0 as u32 => (step, 0),
+                    x if x == VK_UP.0 as u32 => (0, -step),
+                    _ => (0, step),
+                };
+                let p = (self.mouse.0 + dx, self.mouse.1 + dy);
+                unsafe {
+                    let _ = SetCursorPos(p.0, p.1);
+                }
+                self.on_move(p);
+                return;
+            }
+            _ => return,
+        }
+        if self.visible {
+            self.render_all();
+        }
+    }
+
+    fn set_shape(&mut self, s: Shape) {
+        self.shape = s;
+        self.element = None;
+        self.full_mon = None;
+        if s == Shape::Element {
+            self.ask_element();
+        }
+    }
+
+    fn activate(&mut self, b: Btn) {
+        match b {
+            Btn::Intent(i) => self.intent = i,
+            Btn::Shape(s) => self.set_shape(s),
+            Btn::Mic => self.mic = !self.mic,
+            Btn::Audio => self.audio = !self.audio,
+            Btn::Close => self.close(),
+            Btn::OpenApp => {
+                self.close();
+                open_app();
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- capture
+
+    fn finish(&mut self, t: Target) {
+        match self.intent {
+            Intent::Snip => {
+                self.deliver(t);
+                self.close();
+            }
+            Intent::Record => {
+                self.notice = Some("Recording arrives in the next build".into());
+                self.render_all();
+            }
+            Intent::Text => {
+                self.notice = Some("Text mode arrives in the next build".into());
+                self.render_all();
+            }
+        }
+    }
+
+    /// Cut the image from the frozen frame, put it on the clipboard, save it.
+    fn deliver(&mut self, t: Target) {
+        let Some(frame) = &self.frame else { return };
+        let img = match t {
+            Target::Area(r) => frame.crop(&r).map(|(r, px)| Image {
+                w: r.w as u32,
+                h: r.h as u32,
+                bgra: px,
+            }),
+            Target::Shape(pts) => {
+                let (minx, maxx) = pts
+                    .iter()
+                    .fold((i32::MAX, i32::MIN), |a, p| (a.0.min(p.0), a.1.max(p.0)));
+                let (miny, maxy) = pts
+                    .iter()
+                    .fold((i32::MAX, i32::MIN), |a, p| (a.0.min(p.1), a.1.max(p.1)));
+                let bbox = Rect {
+                    x: minx,
+                    y: miny,
+                    w: maxx - minx,
+                    h: maxy - miny,
+                };
+                frame.crop(&bbox).map(|(r, mut px)| {
+                    mask_polygon(&mut px, &r, &pts);
+                    Image {
+                        w: r.w as u32,
+                        h: r.h as u32,
+                        bgra: px,
+                    }
+                })
+            }
+        };
+        let Some(img) = img else { return };
+        let t0 = Instant::now();
+        output::clipboard_set_image(self.main, &img);
+        log(&format!(
+            "clipboard in {:.1} ms",
+            t0.elapsed().as_secs_f64() * 1000.0
+        ));
+        output::save_async(img, self.shots_dir.clone(), self.main);
+    }
+
+    // ---------------------------------------------------------------- toolbar layout
+
+    fn scale(&self) -> f32 {
+        self.wins
+            .get(self.tb_mon)
+            .map(|w| w.mon.scale())
+            .unwrap_or(1.0)
+    }
+
+    /// Toolbar rect and button rects, in local coords of the toolbar monitor.
+    fn layout(&self) -> (D2D_RECT_F, D2D_RECT_F, Vec<(Btn, D2D_RECT_F)>) {
+        let s = self.scale();
+        let mon_w = self
+            .wins
+            .get(self.tb_mon)
+            .map(|w| w.mon.rect.w as f32)
+            .unwrap_or(1920.0);
+        let (pad, seg_item, seg_h, btn_w, btn_h, key_h, gap, sep) =
+            (6.0, 96.0, 32.0, 36.0, 34.0, 13.0, 2.0, 11.0);
+        // row 2 items: (Some(btn), width) or (None, sep)
+        let mut row: Vec<(Option<Btn>, f32)> = SHAPES
+            .iter()
+            .map(|(sh, _, _)| (Some(Btn::Shape(*sh)), btn_w))
+            .collect();
+        if self.intent == Intent::Record {
+            row.push((None, sep));
+            row.push((Some(Btn::Mic), btn_w));
+            row.push((Some(Btn::Audio), btn_w));
+        }
+        row.push((None, sep));
+        row.push((Some(Btn::OpenApp), btn_w));
+        row.push((Some(Btn::Close), btn_w));
+        let row_w: f32 = row.iter().map(|r| r.1).sum::<f32>() + gap * (row.len() as f32 - 1.0);
+        let seg_w = seg_item * 3.0 + 6.0;
+        let inner = row_w.max(seg_w);
+        let bar_w = inner + pad * 2.0;
+        let bar_h = pad + seg_h + pad + btn_h + key_h + pad;
+        let bx = ((mon_w / s) - bar_w) / 2.0;
+        let by = 10.0;
+        let bar = rf(bx * s, by * s, bar_w * s, bar_h * s);
+        let seg = rf(
+            (bx + pad + (inner - seg_w) / 2.0) * s,
+            (by + pad) * s,
+            seg_w * s,
+            seg_h * s,
+        );
+        let mut out = Vec::new();
+        for (i, it) in [Intent::Snip, Intent::Record, Intent::Text]
+            .iter()
+            .enumerate()
+        {
+            let x = (bx + pad + (inner - seg_w) / 2.0 + 3.0 + i as f32 * seg_item) * s;
+            out.push((
+                Btn::Intent(*it),
+                rf(x, (by + pad + 3.0) * s, seg_item * s, (seg_h - 6.0) * s),
+            ));
+        }
+        let mut x = bx + pad + (inner - row_w) / 2.0;
+        let y = by + pad + seg_h + pad;
+        for (b, wd) in &row {
+            if let Some(b) = b {
+                out.push((*b, rf(x * s, y * s, wd * s, (btn_h + key_h) * s)));
+            }
+            x += wd + gap;
+        }
+        (bar, seg, out)
+    }
+
+    fn local(&self, g: (i32, i32)) -> Option<(f32, f32)> {
+        let w = self.wins.get(self.tb_mon)?;
+        Some(((g.0 - w.mon.rect.x) as f32, (g.1 - w.mon.rect.y) as f32))
+    }
+
+    fn in_toolbar(&self, g: (i32, i32)) -> bool {
+        let Some((x, y)) = self.local(g) else {
+            return false;
+        };
+        if !self.wins[self.tb_mon].mon.rect.contains(g.0, g.1) {
+            return false;
+        }
+        let (bar, _, _) = self.layout();
+        x >= bar.left && x <= bar.right && y >= bar.top && y <= bar.bottom
+    }
+
+    fn btn_at(&self, g: (i32, i32)) -> Option<Btn> {
+        if !self.in_toolbar(g) {
+            return None;
+        }
+        let (x, y) = self.local(g)?;
+        let (_, _, btns) = self.layout();
+        btns.iter()
+            .find(|(_, r)| x >= r.left && x < r.right && y >= r.top && y < r.bottom)
+            .map(|(b, _)| *b)
+    }
+
+    // ---------------------------------------------------------------- drawing
+
+    fn render_all(&mut self) {
+        for i in 0..self.wins.len() {
+            self.render(i);
+        }
+    }
+
+    fn render(&mut self, idx: usize) {
+        let Some(mut surf) = self.wins[idx].surf.take() else {
+            return;
+        };
+        if self.gfx.begin(&mut surf).is_ok() {
+            self.draw(idx);
+            let _ = self.gfx.end(&surf);
+        }
+        self.wins[idx].surf = Some(surf);
+    }
+
+    fn draw(&mut self, idx: usize) {
+        let p = self.palette;
+        let mon = self.wins[idx].mon.clone();
+        let (mw, mh) = (mon.rect.w as f32, mon.rect.h as f32);
+        let s = mon.scale();
+        let to_local = |r: &Rect| {
+            rf(
+                (r.x - mon.rect.x) as f32,
+                (r.y - mon.rect.y) as f32,
+                r.w as f32,
+                r.h as f32,
+            )
+        };
+        if let Some(bmp) = &self.wins[idx].frozen {
+            unsafe {
+                self.gfx.dc.DrawBitmap(
+                    bmp,
+                    Some(&rf(0.0, 0.0, mw, mh)),
+                    1.0,
+                    D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR,
+                    None,
+                    None,
+                );
+            }
+        }
+        let edge = if self.intent == Intent::Record {
+            p.rec
+        } else {
+            theme::rgb(0xffffff)
+        };
+        let hl = if self.intent == Intent::Record {
+            p.rec
+        } else {
+            p.accent
+        };
+
+        // Selection / highlight for this monitor.
+        let mut badge: Option<(String, D2D_RECT_F)> = None;
+        if let Some(d) = &self.drag {
+            if self.shape == Shape::Free {
+                let pts: Vec<(f32, f32)> = d
+                    .pts
+                    .iter()
+                    .chain(std::iter::once(&self.mouse))
+                    .map(|&(x, y)| ((x - mon.rect.x) as f32, (y - mon.rect.y) as f32))
+                    .collect();
+                self.gfx.fill(rf(0.0, 0.0, mw, mh), p.dim);
+                if let (Some(geo), Some(bmp)) =
+                    (self.gfx.polygon(&pts), self.wins[idx].frozen.clone())
+                {
+                    unsafe {
+                        let params = D2D1_LAYER_PARAMETERS1 {
+                            contentBounds: rf(-1e6, -1e6, 2e6, 2e6),
+                            geometricMask: std::mem::ManuallyDrop::new(Some(geo.cast().unwrap())),
+                            maskAntialiasMode: D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                            maskTransform: Matrix3x2::identity(),
+                            opacity: 1.0,
+                            opacityBrush: std::mem::ManuallyDrop::new(None),
+                            layerOptions: D2D1_LAYER_OPTIONS1_NONE,
+                        };
+                        self.gfx.dc.PushLayer(&params, None);
+                        self.gfx.dc.DrawBitmap(
+                            &bmp,
+                            Some(&rf(0.0, 0.0, mw, mh)),
+                            1.0,
+                            D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR,
+                            None,
+                            None,
+                        );
+                        self.gfx.dc.PopLayer();
+                        self.gfx.dc.DrawGeometry(
+                            &geo,
+                            self.gfx.color(edge),
+                            1.5 * s,
+                            self.dash.as_ref(),
+                        );
+                    }
+                }
+            } else {
+                let r = Rect::from_points(d.start.0, d.start.1, self.mouse.0, self.mouse.1);
+                let clip = self.wins[d.mon].mon.rect;
+                match r.intersect(&clip).and_then(|r| r.intersect(&mon.rect)) {
+                    Some(r) => {
+                        let lr = to_local(&r);
+                        self.dim_outside(lr, mw, mh);
+                        self.gfx.stroke(
+                            lr,
+                            edge,
+                            1.5 * s,
+                            if self.intent == Intent::Record {
+                                None
+                            } else {
+                                self.dash.as_ref()
+                            },
+                        );
+                        badge = Some((format!("{} × {}", r.w, r.h), lr));
+                    }
+                    None => self.gfx.fill(rf(0.0, 0.0, mw, mh), p.dim),
+                }
+            }
+        } else {
+            let target = match self.shape {
+                Shape::Window | Shape::Element if self.hover.is_none() => {
+                    let r = self.click_target();
+                    let label = match self.shape {
+                        Shape::Element => self
+                            .element
+                            .as_ref()
+                            .map(|e| e.1.clone())
+                            .unwrap_or_else(|| "Finding element…".into()),
+                        _ => self
+                            .hovered_window()
+                            .map(|w| w.title.clone())
+                            .unwrap_or_default(),
+                    };
+                    r.map(|r| (r, label))
+                }
+                Shape::Full => {
+                    let i = self
+                        .full_mon
+                        .unwrap_or_else(|| self.mon_at(self.mouse.0, self.mouse.1));
+                    let m = &self.wins[i].mon;
+                    Some((
+                        m.rect,
+                        format!("Display {} · {} × {} · Enter", i + 1, m.rect.w, m.rect.h),
+                    ))
+                }
+                _ => None,
+            };
+            match target
+                .as_ref()
+                .and_then(|(r, l)| r.intersect(&mon.rect).map(|ri| (ri, *r, l.clone())))
+            {
+                Some((ri, full, label)) => {
+                    let lr = to_local(&ri);
+                    self.dim_outside(lr, mw, mh);
+                    let inset = if self.shape == Shape::Full {
+                        1.5 * s
+                    } else {
+                        0.0
+                    };
+                    let w = if self.shape == Shape::Full {
+                        3.0 * s
+                    } else {
+                        2.0 * s
+                    };
+                    self.gfx.stroke(
+                        rf(
+                            lr.left + inset,
+                            lr.top + inset,
+                            lr.right - lr.left - inset * 2.0,
+                            lr.bottom - lr.top - inset * 2.0,
+                        ),
+                        hl,
+                        w,
+                        None,
+                    );
+                    let text = if label.is_empty() {
+                        format!("{} × {}", full.w, full.h)
+                    } else {
+                        format!("{label} · {} × {}", full.w, full.h)
+                    };
+                    let text = if self.shape == Shape::Full {
+                        label
+                    } else {
+                        text
+                    };
+                    badge = Some((text, lr));
+                }
+                None => self.gfx.fill(rf(0.0, 0.0, mw, mh), p.dim),
+            }
+        }
+
+        if let Some((text, r)) = badge {
+            self.draw_badge(&text, r, mw, mh, s, self.shape == Shape::Full);
+        }
+        if idx == self.tb_mon {
+            self.draw_toolbar();
+        }
+        let over_bar = self.in_toolbar(self.mouse);
+        if self.magnifier
+            && matches!(self.shape, Shape::Rect | Shape::Free)
+            && !over_bar
+            && mon.rect.contains(self.mouse.0, self.mouse.1)
+        {
+            self.draw_loupe(idx);
+        }
+        if let Some(n) = self.notice.clone() {
+            if idx == self.tb_mon {
+                let f = self.gfx.fonts(s).label.clone();
+                let (tw, th) = self.gfx.text_size(&n, &f);
+                let r = rf(
+                    (mw - tw) / 2.0 - 12.0 * s,
+                    124.0 * s,
+                    tw + 24.0 * s,
+                    th + 10.0 * s,
+                );
+                self.gfx.fill_round(r, 8.0 * s, p.fg);
+                self.gfx.text(
+                    &n,
+                    &f,
+                    r.left + 12.0 * s,
+                    r.top + 5.0 * s,
+                    if p.dark {
+                        theme::rgb(0x0d1212)
+                    } else {
+                        theme::rgb(0xffffff)
+                    },
+                );
+            }
+        }
+    }
+
+    fn dim_outside(&self, r: D2D_RECT_F, mw: f32, mh: f32) {
+        let d = self.palette.dim;
+        self.gfx.fill(rf(0.0, 0.0, mw, r.top.max(0.0)), d);
+        self.gfx
+            .fill(rf(0.0, r.bottom, mw, (mh - r.bottom).max(0.0)), d);
+        self.gfx
+            .fill(rf(0.0, r.top, r.left.max(0.0), r.bottom - r.top), d);
+        self.gfx.fill(
+            rf(r.right, r.top, (mw - r.right).max(0.0), r.bottom - r.top),
+            d,
+        );
+    }
+
+    fn draw_badge(
+        &mut self,
+        text: &str,
+        sel: D2D_RECT_F,
+        mw: f32,
+        mh: f32,
+        s: f32,
+        centered: bool,
+    ) {
+        let p = self.palette;
+        let f = self.gfx.fonts(s).badge.clone();
+        let (tw, th) = self.gfx.text_size(text, &f);
+        let (bw, bh) = (tw + 16.0 * s, th + 6.0 * s);
+        let (mut x, mut y) = if centered {
+            ((mw - bw) / 2.0, mh * 0.45)
+        } else {
+            (sel.left, sel.bottom + 6.0 * s)
+        };
+        if y + bh > mh - 4.0 {
+            y = (sel.top - bh - 6.0 * s).max(4.0);
+        }
+        x = x.clamp(4.0, (mw - bw - 4.0).max(4.0));
+        let r = rf(x, y, bw, bh);
+        self.gfx.fill_round(r, 6.0 * s, p.bar);
+        self.gfx.stroke_round(r, 6.0 * s, p.bar_line, 1.0);
+        self.gfx.text(text, &f, x + 8.0 * s, y + 3.0 * s, p.fg);
+    }
+
+    fn draw_toolbar(&mut self) {
+        let p = self.palette;
+        let s = self.scale();
+        let (bar, seg, btns) = self.layout();
+        // soft shadow
+        for (i, a) in [(3.0, 0.05f32), (2.0, 0.07), (1.0, 0.09)] {
+            let e = i * 2.0 * s;
+            self.gfx.fill_round(
+                rf(
+                    bar.left - e / 2.0,
+                    bar.top - e / 4.0 + 3.0 * s,
+                    bar.right - bar.left + e,
+                    bar.bottom - bar.top + e,
+                ),
+                12.0 * s + e,
+                theme::rgba(0, a),
+            );
+        }
+        self.gfx.fill_round(bar, 12.0 * s, p.bar);
+        self.gfx.stroke_round(bar, 12.0 * s, p.bar_line, 1.0);
+        self.gfx.fill_round(seg, 9.0 * s, p.hover);
+
+        let fonts_label = self.gfx.fonts(s).label.clone();
+        let fonts_key = self.gfx.fonts(s).key.clone();
+        for (b, r) in &btns {
+            let hovered = self.hover == Some(*b);
+            match b {
+                Btn::Intent(it) => {
+                    let on = self.intent == *it;
+                    if on {
+                        self.gfx.fill_round(*r, 7.0 * s, p.seg_on);
+                    } else if hovered {
+                        self.gfx.fill_round(*r, 7.0 * s, with_alpha(p.seg_on, 0.5));
+                    }
+                    let (icon, label, key) = match it {
+                        Intent::Snip => ("camera", "Snip", "S"),
+                        Intent::Record => ("video", "Record", "R"),
+                        Intent::Text => ("scan-text", "Text", "T"),
+                    };
+                    let c = if !on {
+                        p.muted
+                    } else {
+                        match it {
+                            Intent::Snip => p.fg,
+                            Intent::Record => p.rec,
+                            Intent::Text => p.accent,
+                        }
+                    };
+                    let (lw, lh) = self.gfx.text_size(label, &fonts_label);
+                    let (kw, _) = self.gfx.text_size(key, &fonts_key);
+                    let kbox = kw + 8.0 * s;
+                    let total = 16.0 * s + 7.0 * s + lw + 7.0 * s + kbox;
+                    let x0 = r.left + ((r.right - r.left) - total) / 2.0;
+                    let cy = (r.top + r.bottom) / 2.0;
+                    self.gfx.icon(icon, x0, cy - 8.0 * s, 16.0 * s, c);
+                    self.gfx
+                        .text(label, &fonts_label, x0 + 23.0 * s, cy - lh / 2.0, c);
+                    let kr = rf(x0 + 23.0 * s + lw + 7.0 * s, cy - 8.0 * s, kbox, 16.0 * s);
+                    self.gfx.stroke_round(kr, 4.0 * s, p.bar_line, 1.0);
+                    self.gfx.text_center(key, &fonts_key, kr, p.muted);
+                }
+                _ => {
+                    let br = rf(r.left, r.top, r.right - r.left, 34.0 * s);
+                    let (icon, key, on, off) = match b {
+                        Btn::Shape(sh) => {
+                            let (_, ic, k) = SHAPES.iter().find(|x| x.0 == *sh).unwrap();
+                            (*ic, *k, self.shape == *sh, false)
+                        }
+                        Btn::Mic => (
+                            if self.mic { "mic" } else { "mic-off" },
+                            "M",
+                            false,
+                            !self.mic,
+                        ),
+                        Btn::Audio => ("volume-2", "A", false, !self.audio),
+                        Btn::OpenApp => ("layout-grid", "O", false, false),
+                        Btn::Close => ("x", "Esc", false, false),
+                        Btn::Intent(_) => unreachable!(),
+                    };
+                    if on {
+                        self.gfx.fill_round(br, 8.0 * s, p.accent_soft);
+                    } else if hovered || self.pressed == Some(*b) {
+                        self.gfx.fill_round(br, 8.0 * s, p.hover);
+                    }
+                    let c = if on {
+                        p.accent
+                    } else if off {
+                        p.muted
+                    } else {
+                        p.fg
+                    };
+                    let cx = (br.left + br.right) / 2.0;
+                    let cy = (br.top + br.bottom) / 2.0;
+                    self.gfx.icon(icon, cx - 9.0 * s, cy - 9.0 * s, 18.0 * s, c);
+                    self.gfx.text_center(
+                        key,
+                        &fonts_key,
+                        rf(
+                            r.left - 6.0 * s,
+                            br.bottom,
+                            r.right - r.left + 12.0 * s,
+                            13.0 * s,
+                        ),
+                        p.muted,
+                    );
+                }
+            }
+        }
+        // separators: between the last shape and the next button group, and before open/close.
+        let row_btns: Vec<&(Btn, D2D_RECT_F)> = btns
+            .iter()
+            .filter(|(b, _)| !matches!(b, Btn::Intent(_)))
+            .collect();
+        for w in row_btns.windows(2) {
+            let gap = w[1].1.left - w[0].1.right;
+            if gap > 5.0 * s {
+                let x = (w[0].1.right + w[1].1.left) / 2.0;
+                self.gfx.line(
+                    x,
+                    w[0].1.top + 4.0 * s,
+                    x,
+                    w[0].1.top + 30.0 * s,
+                    p.bar_line,
+                    1.0,
+                );
+            }
+        }
+    }
+
+    fn draw_loupe(&mut self, idx: usize) {
+        let p = self.palette;
+        let mon = self.wins[idx].mon.clone();
+        let s = mon.scale();
+        let (lx, ly) = (
+            (self.mouse.0 - mon.rect.x) as f32,
+            (self.mouse.1 - mon.rect.y) as f32,
+        );
+        let size = 116.0 * s;
+        let meta_h = 22.0 * s;
+        let mut x = lx + 24.0 * s;
+        let mut y = ly + 24.0 * s;
+        if x + size > mon.rect.w as f32 - 4.0 {
+            x = lx - 24.0 * s - size;
+        }
+        if y + size + meta_h > mon.rect.h as f32 - 4.0 {
+            y = ly - 24.0 * s - size - meta_h;
+        }
+        let outer = rf(x, y, size, size + meta_h);
+        self.gfx.fill_round(outer, 12.0 * s, p.bar);
+        if let Some(bmp) = self.wins[idx].frozen.clone() {
+            let src = rf(lx - 4.0, ly - 4.0, 9.0, 9.0);
+            unsafe {
+                let clip = rf(x + 1.0, y + 1.0, size - 2.0, size - 2.0);
+                self.gfx
+                    .dc
+                    .PushAxisAlignedClip(&clip, D2D1_ANTIALIAS_MODE_ALIASED);
+                self.gfx.dc.DrawBitmap(
+                    &bmp,
+                    Some(&rf(x, y, size, size)),
+                    1.0,
+                    D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR,
+                    Some(&src),
+                    None,
+                );
+                self.gfx.dc.PopAxisAlignedClip();
+            }
+            let cell = size / 9.0;
+            self.gfx.stroke(
+                rf(x + cell * 4.0, y + cell * 4.0, cell, cell),
+                theme::rgb(0xffffff),
+                2.0,
+                None,
+            );
+            self.gfx.stroke(
+                rf(
+                    x + cell * 4.0 - 1.0,
+                    y + cell * 4.0 - 1.0,
+                    cell + 2.0,
+                    cell + 2.0,
+                ),
+                theme::rgba(0, 0.6),
+                1.0,
+                None,
+            );
+        }
+        self.gfx.stroke_round(outer, 12.0 * s, p.bar_line, 1.0);
+        let f = self.gfx.fonts(s).key.clone();
+        let hex = self
+            .frame
+            .as_ref()
+            .and_then(|fr| fr.pixel(self.mouse.0, self.mouse.1))
+            .map(|c| format!("#{:02X}{:02X}{:02X}", c[0], c[1], c[2]))
+            .unwrap_or_default();
+        self.gfx.text(
+            &format!("{}, {}", self.mouse.0, self.mouse.1),
+            &f,
+            x + 8.0 * s,
+            y + size + 5.0 * s,
+            p.fg,
+        );
+        let (hw, _) = self.gfx.text_size(&hex, &f);
+        self.gfx
+            .text(&hex, &f, x + size - hw - 8.0 * s, y + size + 5.0 * s, p.fg);
+    }
+}
+
+/// Zero every pixel outside the polygon (even-odd scanline fill). `px` covers `r`.
+pub fn mask_polygon(px: &mut [u8], r: &Rect, pts: &[(i32, i32)]) {
+    let n = pts.len();
+    let mut xs: Vec<f32> = Vec::with_capacity(16);
+    for row in 0..r.h {
+        let yc = (r.y + row) as f32 + 0.5;
+        xs.clear();
+        for i in 0..n {
+            let (x0, y0) = (pts[i].0 as f32, pts[i].1 as f32);
+            let (x1, y1) = (pts[(i + 1) % n].0 as f32, pts[(i + 1) % n].1 as f32);
+            if (y0 <= yc && y1 > yc) || (y1 <= yc && y0 > yc) {
+                xs.push(x0 + (yc - y0) / (y1 - y0) * (x1 - x0));
+            }
+        }
+        xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let row_px = &mut px[(row * r.w * 4) as usize..((row + 1) * r.w * 4) as usize];
+        let mut inside = vec![false; r.w as usize];
+        for pair in xs.chunks_exact(2) {
+            let a = ((pair[0] - r.x as f32).ceil().max(0.0)) as usize;
+            let b = ((pair[1] - r.x as f32).floor().min(r.w as f32 - 1.0)).max(-1.0);
+            if b >= 0.0 {
+                for v in inside.iter_mut().take(b as usize + 1).skip(a) {
+                    *v = true;
+                }
+            }
+        }
+        for (i, inn) in inside.iter().enumerate() {
+            if !inn {
+                row_px[i * 4..i * 4 + 4].copy_from_slice(&[0, 0, 0, 0]);
+            }
+        }
+    }
+}
+
+/// Bring our window to the front even though the keypress went to another app.
+fn force_foreground(hwnd: HWND) {
+    unsafe {
+        // Fast path: after our own injected input, Windows allows the switch (~1 ms).
+        crate::hotkey::send_dummy_key();
+        if SetForegroundWindow(hwnd).as_bool() && GetForegroundWindow() == hwnd {
+            let _ = SetFocus(Some(hwnd));
+            return;
+        }
+        // Slow path (~30-60 ms): borrow the foreground thread's input state.
+        let fg = GetForegroundWindow();
+        let fg_thread = GetWindowThreadProcessId(fg, None);
+        let me = windows::Win32::System::Threading::GetCurrentThreadId();
+        let attached = fg_thread != 0
+            && fg_thread != me
+            && windows::Win32::System::Threading::AttachThreadInput(me, fg_thread, true).as_bool();
+        let _ = SetForegroundWindow(hwnd);
+        let _ = BringWindowToTop(hwnd);
+        let _ = SetFocus(Some(hwnd));
+        if attached {
+            let _ = windows::Win32::System::Threading::AttachThreadInput(me, fg_thread, false);
+        }
+    }
+}
+
+/// Start the FastSnip app window (a separate exe) if it's installed next to us.
+fn open_app() {
+    if let Ok(exe) = std::env::current_exe() {
+        let app = exe.with_file_name("FastSnip.App.exe");
+        if app.exists() {
+            let _ = std::process::Command::new(app).spawn();
+            return;
+        }
+    }
+    log("app window not installed yet");
+}
+
+pub fn log(s: &str) {
+    let w = HSTRING::from(format!("[fastsnip] {s}\n"));
+    unsafe { windows::Win32::System::Diagnostics::Debug::OutputDebugStringW(&w) };
+    if std::env::var_os("FASTSNIP_LOG").is_some() {
+        eprintln!("[fastsnip] {s}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn polygon_mask_triangle() {
+        let r = Rect {
+            x: 0,
+            y: 0,
+            w: 10,
+            h: 10,
+        };
+        let mut px = vec![255u8; 10 * 10 * 4];
+        mask_polygon(&mut px, &r, &[(0, 0), (10, 0), (0, 10)]);
+        let a = |x: usize, y: usize| px[(y * 10 + x) * 4 + 3];
+        assert_eq!(a(1, 1), 255); // inside
+        assert_eq!(a(9, 9), 0); // outside
+    }
+}

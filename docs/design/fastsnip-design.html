@@ -1,0 +1,984 @@
+<title>FastSnip Design Spec</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500&family=Noto+Sans:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: one 920px column. Live overlay demo first, then toolbar states, capture states, app window screens, tokens, edge cases. App font is Segoe UI Variable; page falls back to Noto Sans off Windows. */
+:root{
+  --bg:#f2f5f5; --panel:#ffffff; --fg:#121a1a; --muted:#566565; --line:#dbe3e3;
+  --accent:#0b7a73; --on-accent:#ffffff;
+  --rec:#d93636; --rec-soft:#fbe3e3; --ok:#1d8a4e;
+  --bar:rgba(251,253,253,.97); --bar-line:#cbd7d7; --hover:#e8eeee;
+  --desk:#b4c4c6; --win:#f7f9f9; --win-line:#ccd7d8; --ink:#9aabad; --dim:rgba(6,16,16,.46);
+  --fast-bg:#d7f2e2; --fast-fg:#11683a; --slow-bg:#fbebd0; --slow-fg:#7f4d00;
+  --shadow:0 8px 24px rgba(0,30,30,.16),0 1px 3px rgba(0,30,30,.12);
+  --f-ui:"Segoe UI Variable Text","Segoe UI Variable","Segoe UI","Noto Sans",system-ui,sans-serif;
+  --f-disp:"Segoe UI Variable Display","Segoe UI Variable","Segoe UI","Noto Sans",system-ui,sans-serif;
+  --f-mono:"Cascadia Mono","JetBrains Mono",ui-monospace,monospace;
+  --r-bar:12px; --r-btn:8px; --r-card:10px;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0d1212; --panel:#151c1c; --fg:#e6eded; --muted:#93a3a3; --line:#253030;
+  --accent:#3cc4b9; --on-accent:#03201d;
+  --rec:#ff5c5c; --rec-soft:#3a1a1a; --ok:#5fd08f;
+  --bar:rgba(28,36,36,.97); --bar-line:#334141; --hover:#253131;
+  --desk:#253435; --win:#192121; --win-line:#2e3b3b; --ink:#455656; --dim:rgba(0,0,0,.52);
+  --fast-bg:#163724; --fast-fg:#7fdfa6; --slow-bg:#3a2a10; --slow-fg:#f2c169;
+  --shadow:0 8px 24px rgba(0,0,0,.45),0 1px 3px rgba(0,0,0,.4); color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0d1212; --panel:#151c1c; --fg:#e6eded; --muted:#93a3a3; --line:#253030;
+  --accent:#3cc4b9; --on-accent:#03201d;
+  --rec:#ff5c5c; --rec-soft:#3a1a1a; --ok:#5fd08f;
+  --bar:rgba(28,36,36,.97); --bar-line:#334141; --hover:#253131;
+  --desk:#253435; --win:#192121; --win-line:#2e3b3b; --ink:#455656; --dim:rgba(0,0,0,.52);
+  --fast-bg:#163724; --fast-fg:#7fdfa6; --slow-bg:#3a2a10; --slow-fg:#f2c169;
+  --shadow:0 8px 24px rgba(0,0,0,.45),0 1px 3px rgba(0,0,0,.4); color-scheme:dark}
+:root{--accent-soft:color-mix(in srgb,var(--accent) 16%,var(--panel));--ocr:color-mix(in srgb,var(--accent) 20%,transparent);--ocr-sel:color-mix(in srgb,var(--accent) 45%,transparent)}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:15px/1.6 var(--f-ui);padding-inline:16px;padding-block:28px 72px}
+.wrap{max-width:920px;margin:0 auto;display:flex;flex-direction:column;gap:56px}
+h1{font:700 32px/1.15 var(--f-disp);margin:0;letter-spacing:-.015em;text-wrap:balance}
+h2{font:700 22px/1.25 var(--f-disp);margin:0;text-wrap:balance}
+h3{font:600 16px/1.35 var(--f-disp);margin:0}
+p{margin:0}
+.lead{color:var(--muted);max-width:66ch;margin-top:8px}
+.muted{color:var(--muted)}
+.small{font-size:13px}
+.mono{font-family:var(--f-mono);font-size:12.5px}
+section{display:flex;flex-direction:column;gap:16px}
+.eyebrow{font:600 12px var(--f-ui);letter-spacing:.09em;text-transform:uppercase;color:var(--accent)}
+header{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;align-items:flex-start}
+.theme{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--panel)}
+.theme button{border:0;background:none;color:var(--muted);padding:7px 11px;cursor:pointer;display:flex;align-items:center;gap:6px;font:500 13px var(--f-ui)}
+.theme button[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent)}
+.theme svg{width:15px;height:15px}
+.picks{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}
+.pk{font-size:12.5px;border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:3px 10px;color:var(--muted)}
+.pk b{color:var(--fg);font-weight:600}
+.scroll{overflow-x:auto;border-radius:14px}
+.grid2{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:16px;align-items:start}
+@media (max-width:860px){.grid2{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}
+/* stage = frozen desktop */
+.stage{position:relative;height:380px;min-width:640px;border-radius:14px;overflow:hidden;background:var(--desk);border:1px solid var(--line);user-select:none}
+.stage.sm{height:260px}
+.w{position:absolute;background:var(--win);border:1px solid var(--win-line);border-radius:8px;overflow:hidden}
+.w .tt{height:22px;border-bottom:1px solid var(--win-line);display:flex;align-items:center;gap:6px;padding:0 8px;font:500 10.5px var(--f-ui);color:var(--muted)}
+.w .tt i{width:7px;height:7px;border-radius:50%;background:var(--ink);display:block}
+.ln{height:6px;border-radius:3px;background:var(--ink);margin:8px 12px;opacity:.75}
+.fakebtn{position:absolute;border-radius:5px;background:var(--accent);opacity:.85}
+.task{position:absolute;left:0;right:0;bottom:0;height:30px;background:var(--bar);border-top:1px solid var(--bar-line);display:flex;align-items:center;justify-content:center;gap:10px;color:var(--muted)}
+.task span{width:18px;height:18px;border-radius:4px;background:var(--ink);opacity:.7}
+.task .clock{position:absolute;right:12px;font:500 11px var(--f-mono);color:var(--fg)}
+.dimall{position:absolute;inset:0;background:var(--dim)}
+.cut{position:absolute;box-shadow:0 0 0 3000px var(--dim);outline:1.5px solid #fff}
+.cut.dash{outline-style:dashed}
+.cut.recsel{outline:2px dashed var(--rec)}
+.cut.hl{outline:2px solid var(--accent);background:color-mix(in srgb,var(--accent) 8%,transparent)}
+.handle{position:absolute;width:8px;height:8px;background:#fff;border:1px solid rgba(0,0,0,.35);border-radius:2px;transform:translate(-50%,-50%)}
+.badge{position:absolute;font:500 11.5px var(--f-mono);background:var(--bar);color:var(--fg);border:1px solid var(--bar-line);border-radius:6px;padding:2px 8px;white-space:nowrap;z-index:4}
+.chipbar{position:absolute;display:flex;gap:2px;background:var(--bar);border:1px solid var(--bar-line);border-radius:10px;padding:3px;box-shadow:var(--shadow);white-space:nowrap;z-index:5}
+.chipbar span{display:flex;align-items:center;gap:6px;font:500 12.5px var(--f-ui);color:var(--fg);padding:4px 10px;border-radius:7px}
+.chipbar span svg{width:14px;height:14px}
+.chipbar .p{background:var(--accent);color:var(--on-accent)}
+.chipbar .r{background:var(--rec);color:#fff}
+.chipbar .kk{font:500 10.5px var(--f-mono);opacity:.75}
+.word{position:absolute;border-radius:3px;background:var(--ocr)}
+.word.s{background:var(--ocr-sel)}
+svg.lasso{position:absolute;inset:0;width:100%;height:100%}
+/* toolbar */
+.tb{position:absolute;top:10px;left:50%;transform:translateX(-50%);background:var(--bar);border:1px solid var(--bar-line);border-radius:var(--r-bar);box-shadow:var(--shadow);padding:6px;display:flex;flex-direction:column;gap:6px;z-index:6;white-space:nowrap}
+.tb.static{position:relative;top:auto;left:auto;transform:none;display:inline-flex}
+.seg{display:flex;gap:2px;background:var(--hover);border-radius:9px;padding:3px}
+.seg button{flex:1;border:0;background:none;color:var(--muted);font:500 13px var(--f-ui);padding:5px 12px;border-radius:7px;display:flex;align-items:center;justify-content:center;gap:7px;cursor:pointer}
+.seg button svg{width:16px;height:16px}
+.seg button .kk{font:500 10.5px var(--f-mono);color:var(--muted);border:1px solid var(--bar-line);border-radius:4px;padding:0 4px;line-height:15px}
+.seg button.on{background:var(--panel);color:var(--fg);box-shadow:0 1px 2px rgba(0,0,0,.14)}
+.seg button.on.rec{color:var(--rec)}
+.seg button.on.txt{color:var(--accent)}
+.row{display:flex;align-items:flex-start;justify-content:center;gap:2px}
+.kb{display:flex;flex-direction:column;align-items:center;gap:2px}
+.b{width:36px;height:34px;display:flex;align-items:center;justify-content:center;border:0;border-radius:var(--r-btn);background:none;color:var(--fg);cursor:pointer}
+.b svg{width:18px;height:18px;stroke-width:1.9}
+.b:hover{background:var(--hover)}
+.b.on{background:var(--accent-soft);color:var(--accent)}
+.b.tog.off{color:var(--muted)}
+.b.tog.off svg{opacity:.55}
+.b.focus{outline:2px solid var(--accent);outline-offset:1px}
+.k{font:500 10px var(--f-mono);color:var(--muted);line-height:1}
+.sep{width:1px;align-self:stretch;margin:4px 5px 14px;background:var(--bar-line)}
+button:focus-visible,.theme button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+/* loupe */
+.loupe{position:absolute;width:116px;border-radius:12px;overflow:hidden;background:var(--bar);border:1px solid var(--bar-line);box-shadow:var(--shadow);z-index:5}
+.px{display:grid;grid-template-columns:repeat(9,1fr);aspect-ratio:1;max-width:100%}
+.px i{border:.5px solid rgba(0,0,0,.08)}
+.lmeta{font:500 10.5px var(--f-mono);padding:5px 8px;display:flex;justify-content:space-between;color:var(--fg)}
+/* key table */
+.keys{width:100%;border-collapse:collapse;font-size:13.5px}
+.keys td{padding:6px 0;border-bottom:1px solid var(--line);vertical-align:top}
+.keys tr:last-child td{border-bottom:0}
+.keys td:first-child{width:46%;padding-right:8px}
+kbd{display:inline-block;font:500 11.5px var(--f-mono);border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:0 6px;background:var(--bg);color:var(--fg);margin:1px 2px 1px 0}
+.cap{font-size:13.5px;color:var(--muted);max-width:70ch}
+/* state strip */
+.states{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:14px}
+.state{display:flex;flex-direction:column;gap:8px;min-width:0}
+.state .lbl{font:600 13px var(--f-ui);display:flex;gap:8px;align-items:center}
+.state .lbl .t{font:500 11px var(--f-mono);color:var(--accent);background:var(--accent-soft);padding:1px 7px;border-radius:5px}
+.tile{background:var(--desk);border:1px solid var(--line);border-radius:12px;padding:16px;display:flex;justify-content:center;align-items:center;min-height:120px;position:relative;overflow:hidden}
+/* rec pill + toast */
+.recpill{display:flex;align-items:center;gap:2px;background:var(--bar);border:1px solid var(--bar-line);border-radius:var(--r-bar);padding:4px 4px 4px 12px;box-shadow:var(--shadow);white-space:nowrap}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--rec);animation:blink 1.2s infinite}
+@keyframes blink{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.dot{animation:none}}
+.time{font:500 13px var(--f-mono);font-variant-numeric:tabular-nums;margin:0 8px 0 6px}
+.toast{width:280px;max-width:100%;background:var(--bar);border:1px solid var(--bar-line);border-radius:12px;box-shadow:var(--shadow);padding:10px;display:flex;gap:10px}
+.thumb{width:72px;height:48px;border-radius:6px;background:var(--desk);border:1px solid var(--win-line);flex:none;position:relative;overflow:hidden}
+.thumb::after{content:"";position:absolute;left:8px;top:8px;right:14px;height:22px;background:var(--win);border-radius:3px}
+.thumb .dur{position:absolute;right:3px;bottom:3px;z-index:1;font:500 9.5px var(--f-mono);background:var(--bar);border-radius:3px;padding:0 3px;color:var(--fg)}
+.toast .h{font:600 13px var(--f-ui);display:flex;align-items:center;gap:6px}
+.toast .h svg{width:14px;height:14px;color:var(--ok)}
+.toast .s{font:500 11px var(--f-mono);color:var(--muted);word-break:break-all}
+.toast .acts{display:flex;gap:2px;margin-top:4px}
+.toast .acts .b{width:28px;height:28px}
+.toast .acts .b svg{width:15px;height:15px}
+.prog{height:3px;border-radius:2px;background:var(--line);overflow:hidden;margin-top:6px}
+.prog i{display:block;height:100%;width:60%;background:var(--accent)}
+.disp{display:flex;gap:6px}
+.disp .m{width:74px;height:46px;border-radius:5px;border:1.5px solid var(--bar-line);background:var(--win);display:flex;align-items:center;justify-content:center;font:600 13px var(--f-ui);color:var(--muted)}
+.disp .m.on{border:2px solid var(--accent);color:var(--accent);background:var(--accent-soft)}
+/* app window */
+.app{border:1px solid var(--line);border-radius:12px;background:var(--panel);overflow:hidden;box-shadow:var(--shadow)}
+.titlebar{height:38px;display:flex;align-items:center;justify-content:space-between;padding:0 0 0 14px;border-bottom:1px solid var(--line);font:500 12.5px var(--f-ui);gap:8px}
+.titlebar .tl{display:flex;align-items:center;gap:8px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.titlebar svg{width:16px;height:16px;flex:none}
+.titlebar .logo{color:var(--accent)}
+.wb{display:flex;color:var(--muted)}
+.wb span{width:44px;height:37px;display:flex;align-items:center;justify-content:center}
+.wb svg{width:14px;height:14px}
+.body{display:grid;grid-template-columns:190px minmax(0,1fr);min-height:420px}
+.nav{border-right:1px solid var(--line);padding:10px 8px;display:flex;flex-direction:column;gap:2px;background:var(--bg)}
+.nav a{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:7px;color:var(--fg);font:500 13.5px var(--f-ui);text-decoration:none;position:relative;white-space:nowrap}
+.nav a svg{width:17px;height:17px;color:var(--muted)}
+.nav a.on{background:var(--hover)}
+.nav a.on::before{content:"";position:absolute;left:0;top:9px;bottom:9px;width:3px;border-radius:2px;background:var(--accent)}
+.nav a.on svg{color:var(--accent)}
+.nav .sp{flex:1}
+.pane{padding:20px 24px;min-width:0;display:flex;flex-direction:column;gap:14px}
+.ph{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.btnp,.btns{display:inline-flex;align-items:center;gap:6px;border-radius:7px;padding:6px 13px;font:600 13px var(--f-ui);white-space:nowrap;border:1px solid transparent;cursor:pointer}
+.btnp{background:var(--accent);color:var(--on-accent)}
+.btns{background:var(--panel);color:var(--fg);border-color:var(--line);font-weight:500}
+.btnp svg,.btns svg{width:14px;height:14px}
+.filters{display:flex;gap:6px;flex-wrap:wrap}
+.filters span{font-size:12.5px;padding:3px 11px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+.filters span.on{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+.gal{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px}
+.gi{border-radius:9px;overflow:hidden;border:1px solid var(--line);background:var(--bg)}
+.gi.on{outline:2px solid var(--accent);outline-offset:1px}
+.gth{aspect-ratio:16/10;background:var(--desk);position:relative;max-width:100%}
+.gth::after{content:"";position:absolute;left:12%;top:16%;right:22%;bottom:24%;background:var(--win);border-radius:4px}
+.gty{position:absolute;left:6px;top:6px;z-index:1;font:500 10.5px var(--f-mono);background:var(--bar);color:var(--fg);border-radius:5px;padding:1px 6px;display:flex;gap:4px;align-items:center}
+.gty svg{width:11px;height:11px}
+.gm{padding:6px 9px;font-size:11.5px;color:var(--muted);display:flex;justify-content:space-between}
+.day{font:600 12px var(--f-ui);color:var(--muted);letter-spacing:.06em;text-transform:uppercase}
+.editor{display:grid;grid-template-columns:52px minmax(0,1fr) 200px;min-height:440px}
+.rail{border-right:1px solid var(--line);padding:8px;display:flex;flex-direction:column;gap:2px;align-items:center;background:var(--bg)}
+.rail .b{width:36px;height:36px}
+.rail .sep2{height:1px;width:26px;background:var(--line);margin:4px 0}
+.canvas{padding:20px;background:var(--hover);min-width:0;display:flex;flex-direction:column;gap:12px;justify-content:center}
+.shot{position:relative;aspect-ratio:16/9;max-width:100%;background:var(--desk);border-radius:4px;overflow:hidden;box-shadow:var(--shadow)}
+.ann-box{position:absolute;border:3px solid #e5383b;border-radius:4px}
+.ann-txt{position:absolute;font:700 14px var(--f-disp);color:#e5383b;background:#fff;padding:1px 6px;border-radius:4px}
+.ann-hl{position:absolute;height:11px;background:rgba(255,206,0,.55);border-radius:2px}
+.ann-blur{position:absolute;border-radius:3px;background:repeating-linear-gradient(45deg,var(--ink) 0 5px,var(--win-line) 5px 10px)}
+.ann-num{position:absolute;width:22px;height:22px;border-radius:50%;background:#e5383b;color:#fff;font:700 12px var(--f-ui);display:flex;align-items:center;justify-content:center}
+.ann-arrow{position:absolute;height:3px;background:#e5383b;transform-origin:left center;border-radius:2px}
+.ann-arrow::after{content:"";position:absolute;right:-2px;top:-5px;border-left:10px solid #e5383b;border-top:6.5px solid transparent;border-bottom:6.5px solid transparent}
+.props{border-left:1px solid var(--line);padding:14px;display:flex;flex-direction:column;gap:14px;font-size:13px}
+.props .pl{font:600 12px var(--f-ui);color:var(--muted);margin-bottom:6px}
+.sw{display:flex;gap:6px;flex-wrap:wrap}
+.sw i{width:22px;height:22px;border-radius:50%;display:block;border:2px solid var(--panel);outline:1px solid var(--line)}
+.sw i.on{outline:2px solid var(--accent)}
+.slider{height:4px;border-radius:2px;background:var(--line);position:relative}
+.slider::before{content:"";position:absolute;left:0;top:0;bottom:0;width:35%;background:var(--accent);border-radius:2px}
+.slider::after{content:"";position:absolute;left:35%;top:50%;width:14px;height:14px;border-radius:50%;background:var(--panel);border:2px solid var(--accent);transform:translate(-50%,-50%)}
+.trim{position:relative;height:44px;border-radius:7px;background:repeating-linear-gradient(90deg,var(--win-line) 0 40px,var(--desk) 40px 42px);overflow:hidden}
+.trim .keep{position:absolute;top:0;bottom:0;left:12%;right:20%;border:3px solid var(--accent);border-radius:7px;box-shadow:0 0 0 999px rgba(0,0,0,.35)}
+.trim .ph2{position:absolute;top:0;bottom:0;left:44%;width:2px;background:var(--rec)}
+.tctl{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;font:500 12px var(--f-mono);color:var(--muted)}
+.set{display:flex;flex-direction:column}
+.sr{display:flex;justify-content:space-between;align-items:center;gap:14px;padding:12px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.sr:last-child{border-bottom:0}
+.sr .rl{min-width:0;flex:1 1 220px}
+.sr .rl b{font-weight:500;display:block}
+.sr .rl small{color:var(--muted);font-size:12.5px}
+.group{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:2px 14px}
+.gh{font:600 13px var(--f-ui);margin:4px 0 -6px}
+.sel{border:1px solid var(--line);border-radius:7px;padding:5px 10px;font-size:13px;display:inline-flex;gap:10px;align-items:center;background:var(--panel)}
+.sel svg{width:14px;height:14px;color:var(--muted)}
+.tg{width:40px;height:20px;border-radius:999px;background:var(--accent);position:relative;flex:none}
+.tg::after{content:"";position:absolute;right:3px;top:3px;width:14px;height:14px;border-radius:50%;background:var(--on-accent)}
+.tg.off{background:transparent;border:1px solid var(--muted)}
+.tg.off::after{right:auto;left:3px;top:2px;background:var(--muted)}
+.seg2{display:inline-flex;border:1px solid var(--line);border-radius:7px;overflow:hidden}
+.seg2 span{padding:4px 11px;font-size:12.5px;border-right:1px solid var(--line)}
+.seg2 span:last-child{border-right:0}
+.seg2 span.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.kbx{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--line);border-bottom-width:2px;border-radius:7px;padding:2px 8px;font:500 12px var(--f-mono);background:var(--panel)}
+.kbx.add{border-style:dashed;border-bottom-width:1px;color:var(--muted)}
+.kbx svg{width:12px;height:12px}
+.modecards{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+.mc{border:1px solid var(--line);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px;background:var(--panel)}
+.mc.on{border:2px solid var(--accent);padding:11px}
+.mc .mt{display:flex;align-items:center;gap:8px;font:600 14px var(--f-ui)}
+.mc .mt svg{width:16px;height:16px}
+.mc p{font-size:13px;color:var(--muted);line-height:1.5}
+.spd{font:500 12px var(--f-mono);align-self:flex-start;padding:2px 8px;border-radius:6px;background:var(--fast-bg);color:var(--fast-fg)}
+.spd.slow{background:var(--slow-bg);color:var(--slow-fg)}
+.steps{display:flex;gap:6px;align-items:center;font-size:12.5px;color:var(--muted);flex-wrap:wrap}
+.steps span{display:flex;align-items:center;gap:6px}
+.steps .n{width:20px;height:20px;border-radius:50%;border:1.5px solid var(--line);display:flex;align-items:center;justify-content:center;font:600 11px var(--f-ui)}
+.steps .done .n{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.steps .cur{color:var(--fg);font-weight:600}
+.steps .cur .n{border-color:var(--accent);color:var(--accent)}
+.steps i{width:18px;height:1px;background:var(--line)}
+.bench{width:100%;min-width:480px;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+.bench th{text-align:left;font-weight:500;color:var(--muted);padding:6px 8px;border-bottom:1px solid var(--line)}
+.bench td{padding:9px 8px;border-bottom:1px solid var(--line)}
+.bench tr.win td{background:var(--accent-soft)}
+.bm{height:6px;border-radius:3px;background:var(--accent);display:block}
+.bm.g{background:var(--ink)}
+.menu{width:240px;background:var(--bar);border:1px solid var(--bar-line);border-radius:10px;box-shadow:var(--shadow);padding:4px}
+.mi{display:flex;align-items:center;gap:10px;padding:6px 10px;border-radius:6px;font-size:13px}
+.mi svg{width:15px;height:15px;color:var(--muted)}
+.mi .kk{margin-left:auto;font:500 11px var(--f-mono);color:var(--muted)}
+.mi.on{background:var(--hover)}
+.md{height:1px;background:var(--bar-line);margin:4px 6px}
+/* tokens */
+.tok{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.sw2{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--panel)}
+.sw2 .c{height:44px;display:flex}
+.sw2 .c i{flex:1}
+.sw2 .m{padding:6px 10px;font-size:12px}
+.sw2 .m b{display:block;font-weight:600;font-size:12.5px}
+.sw2 .m span{font-family:var(--f-mono);font-size:11px;color:var(--muted)}
+.scale{display:flex;flex-direction:column;gap:6px}
+.scale div{display:flex;gap:14px;align-items:baseline;border-bottom:1px solid var(--line);padding-bottom:6px;flex-wrap:wrap}
+.scale .sn{font:500 11.5px var(--f-mono);color:var(--muted);width:150px;flex:none}
+.budget{width:100%;border-collapse:collapse;font-size:13.5px;font-variant-numeric:tabular-nums}
+.budget th{text-align:left;font-weight:500;color:var(--muted);padding:6px 8px;border-bottom:1px solid var(--line)}
+.budget td{padding:8px;border-bottom:1px solid var(--line)}
+.budget td.n{font-family:var(--f-mono);white-space:nowrap}
+.edge{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+.ec{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:14px;display:flex;flex-direction:column;gap:8px}
+.ec .eh{display:flex;align-items:center;gap:8px;font:600 14px var(--f-ui)}
+.ec .eh svg{width:16px;height:16px;flex:none}
+.ec .eh.warn svg{color:var(--slow-fg)}
+.ec .eh.info svg{color:var(--accent)}
+.ec p{font-size:13.5px;color:var(--muted)}
+.ec .acts{display:flex;gap:6px;flex-wrap:wrap}
+.notes{padding-left:18px;margin:0;display:flex;flex-direction:column;gap:6px;max-width:72ch}
+
+.hdr-right{display:flex;flex-direction:column;gap:10px;align-items:flex-end}
+.hdr-right .lbl2{font-size:12px;color:var(--muted)}
+.acc-pick{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.acc-pick button{width:24px;height:24px;border-radius:50%;border:2px solid var(--panel);outline:1px solid var(--line);cursor:pointer;padding:0}
+.acc-pick button[aria-pressed="true"]{outline:2px solid var(--fg)}
+.acc-pick .sys{width:auto;height:26px;border-radius:999px;padding:0 10px;font:500 12px var(--f-ui);background:var(--panel);color:var(--fg);display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);outline:none}
+.acc-pick .sys svg{width:13px;height:13px}
+.acc-pick .sys[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+.acc-pick input[type=color]{width:30px;height:26px;border:1px solid var(--line);border-radius:7px;padding:2px;background:var(--panel);cursor:pointer}
+.lt{position:relative;height:420px;min-width:600px;border-radius:14px;overflow:hidden;background:var(--desk);border:1px solid var(--line);touch-action:none;user-select:none;-webkit-user-select:none;cursor:crosshair;outline:none}
+.lt:focus-visible{box-shadow:0 0 0 2px var(--accent)}
+.lt-screen{position:absolute;inset:0;padding:22px 36px}
+.lt-win{background:var(--win);border:1px solid var(--win-line);border-radius:8px;height:100%;overflow:hidden}
+.lt-win .tt{height:24px;border-bottom:1px solid var(--win-line);display:flex;align-items:center;gap:6px;padding:0 10px;font:500 11px var(--f-ui);color:var(--muted)}
+.lt-win .tt i{width:7px;height:7px;border-radius:50%;background:var(--ink);display:block}
+.lt-doc{padding:16px 26px;font:14px/1.75 var(--f-ui);color:var(--fg);max-width:640px}
+.lt-doc p{margin:0 0 9px}
+.lt-doc p.lt-h{font:600 20px/1.3 var(--f-disp);margin-bottom:12px}
+.lt-doc p.lt-code{font:13px/1.6 var(--f-mono);background:var(--hover);display:inline-block;padding:4px 10px;border-radius:6px}
+.lt-cut{position:absolute;box-shadow:0 0 0 3000px var(--dim);outline:1.5px solid #fff;pointer-events:none;z-index:2}
+.lt-layer{position:absolute;inset:0;z-index:3;pointer-events:none}
+.ocrw{position:absolute;border-radius:4px;background:var(--ocr);pointer-events:auto;cursor:text;animation:ocrpop .18s ease-out both}
+.ocrw.s{background:var(--ocr-sel);box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 60%,transparent)}
+.ocrw.lnk{box-shadow:inset 0 -2px 0 var(--accent)}
+.ocrw.lnk.s{box-shadow:inset 0 -2px 0 var(--accent),0 0 0 1px color-mix(in srgb,var(--accent) 60%,transparent)}
+@keyframes ocrpop{from{opacity:0;transform:scale(.9)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.ocrw{animation:none}}
+.lt-hint{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:5;font:500 12.5px var(--f-ui);background:var(--bar);color:var(--fg);border:1px solid var(--bar-line);border-radius:999px;padding:4px 12px;box-shadow:var(--shadow);white-space:nowrap;pointer-events:none}
+.lt-bar{position:absolute;z-index:6;display:flex;gap:2px;background:var(--bar);border:1px solid var(--bar-line);border-radius:10px;padding:3px;box-shadow:var(--shadow);white-space:nowrap;cursor:default}
+.lt-bar button{display:flex;align-items:center;gap:6px;border:0;background:none;color:var(--fg);font:500 12.5px var(--f-ui);padding:5px 10px;border-radius:7px;cursor:pointer}
+.lt-bar button:hover{background:var(--hover)}
+.lt-bar button.p{background:var(--accent);color:var(--on-accent)}
+.lt-bar svg{width:14px;height:14px}
+.lt-toast{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);z-index:7;background:var(--fg);color:var(--bg);font:500 13px var(--f-ui);padding:6px 14px;border-radius:8px;white-space:nowrap}
+.lt-ctl{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.lt-tog{display:flex;align-items:center;gap:6px;font-size:13.5px;color:var(--fg);margin-left:4px;cursor:pointer}
+.lt-tog input{accent-color:var(--accent);width:15px;height:15px;margin:0}
+.lt-clip-h{display:flex;align-items:center;gap:8px;font:600 13px var(--f-ui);margin-bottom:6px}
+.lt-clip-h svg{width:15px;height:15px;color:var(--muted)}
+#lt-clip{margin:0;white-space:pre-wrap;word-break:break-word;font:12.5px/1.6 var(--f-mono);color:var(--fg)}
+@media (max-width:700px){.body{grid-template-columns:1fr}.nav{flex-direction:row;overflow-x:auto;border-right:0;border-bottom:1px solid var(--line)}.nav .sp{display:none}.editor{grid-template-columns:52px minmax(0,1fr)}.props{display:none}}
+</style>
+
+<div class="wrap">
+
+<header>
+  <div>
+    <div class="eyebrow">FastSnip · UI design v1</div>
+    <h1>FastSnip design spec</h1>
+    <p class="lead">Built from your picks. The overlay demo below is live: switch Snip, Record and Text, then try each capture shape. Everything after it covers the remaining states, the app window, and the tokens the build will use.</p>
+    <div class="picks">
+      <span class="pk">Toolbar <b>B · intent first</b></span><span class="pk">Key hints <b>on</b></span><span class="pk">Shape <b>rounded</b></span><span class="pk">Accent <b>teal, changeable</b></span><span class="pk">Loupe <b>on</b></span><span class="pk">Toast <b>on</b></span><span class="pk">Default <b>tray</b></span><span class="pk">Editor <b>8 tools</b></span><span class="pk">Nav <b>sidebar</b></span>
+    </div>
+  </div>
+  <div class="hdr-right">
+  <div class="theme" role="group" aria-label="Theme">
+    <button data-t="light" type="button"><i data-lucide="sun"></i>Light</button>
+    <button data-t="system" type="button"><i data-lucide="monitor"></i>Auto</button>
+    <button data-t="dark" type="button"><i data-lucide="moon"></i>Dark</button>
+  </div>
+    <span class="lbl2">Accent · <span data-acc-name></span></span>
+    <div class="acc-pick" role="group" aria-label="Accent color"><button type="button" data-a="teal" style="background:#0b7a73" aria-label="Teal" title="Teal"></button><button type="button" data-a="blue" style="background:#0067c0" aria-label="Blue" title="Blue"></button><button type="button" data-a="violet" style="background:#6b4eff" aria-label="Violet" title="Violet"></button><button type="button" data-a="green" style="background:#1d7f3a" aria-label="Green" title="Green"></button><button type="button" data-a="orange" style="background:#c25400" aria-label="Orange" title="Orange"></button><button type="button" data-a="pink" style="background:#c2185b" aria-label="Pink" title="Pink"></button><button type="button" class="sys" data-a="system"><i data-lucide="monitor"></i>Follow Windows</button><input type="color" id="acc-c1" value="#0b7a73" aria-label="Custom accent color" title="Custom color"></div>
+  </div>
+</header>
+
+<!-- LIVE OVERLAY -->
+<section>
+  <div><div class="eyebrow">Overlay</div><h2>Live overlay demo</h2></div>
+  <div class="grid2">
+    <div class="scroll">
+      <div class="stage" id="stage">
+        <div class="w" style="left:4%;top:12%;width:44%;height:72%"><div class="tt"><i></i>notes.md · Code</div><div class="ln" style="width:60%"></div><div class="ln" style="width:82%"></div><div class="ln" style="width:48%"></div><div class="ln" style="width:70%"></div><div class="ln" style="width:56%"></div></div>
+        <div class="fakebtn" style="left:10%;top:68%;width:16%;height:7%"></div>
+        <div class="w" style="left:52%;top:20%;width:42%;height:62%"><div class="tt"><i></i>Docs · Edge</div><div class="ln" style="width:40%"></div><div class="ln" style="width:88%"></div><div class="ln" style="width:76%"></div><div class="ln" style="width:64%"></div></div>
+        <div class="task"><span></span><span></span><span></span><span></span><span class="clock">14:32</span></div>
+        <div id="sel"></div>
+        <div class="tb" id="tb">
+          <div class="seg" id="intent">
+            <button type="button" class="on" data-i="snip"><i data-lucide="camera"></i>Snip<span class="kk">S</span></button>
+            <button type="button" class="rec" data-i="record"><i data-lucide="video"></i>Record<span class="kk">R</span></button>
+            <button type="button" class="txt" data-i="text"><i data-lucide="scan-text"></i>Text<span class="kk">T</span></button>
+          </div>
+          <div class="row" id="shapes">
+            <div class="kb"><button class="b on" type="button" data-s="rect" aria-label="Rectangle" title="Rectangle"><i data-lucide="square-dashed"></i></button><span class="k">1</span></div>
+            <div class="kb"><button class="b" type="button" data-s="window" aria-label="Window" title="Window"><i data-lucide="app-window"></i></button><span class="k">2</span></div>
+            <div class="kb"><button class="b" type="button" data-s="element" aria-label="Element" title="Element"><i data-lucide="scan"></i></button><span class="k">3</span></div>
+            <div class="kb"><button class="b" type="button" data-s="free" aria-label="Freeform" title="Freeform"><i data-lucide="lasso"></i></button><span class="k">4</span></div>
+            <div class="kb"><button class="b" type="button" data-s="full" aria-label="Full screen" title="Full screen"><i data-lucide="monitor"></i></button><span class="k">5</span></div>
+            <span class="sep recx" hidden></span>
+            <div class="kb recx" hidden><button class="b tog" type="button" aria-label="Microphone" title="Microphone"><i data-lucide="mic"></i></button><span class="k">M</span></div>
+            <div class="kb recx" hidden><button class="b tog" type="button" aria-label="System audio" title="System audio"><i data-lucide="volume-2"></i></button><span class="k">A</span></div>
+            <span class="sep"></span>
+            <div class="kb"><button class="b" type="button" aria-label="Open FastSnip" title="Open FastSnip"><i data-lucide="layout-grid"></i></button><span class="k">O</span></div>
+            <div class="kb"><button class="b" type="button" aria-label="Close" title="Close"><i data-lucide="x"></i></button><span class="k">Esc</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <h3 style="margin-bottom:8px">Keys on the overlay</h3>
+      <table class="keys">
+        <tr><td><kbd>S</kbd><kbd>R</kbd><kbd>T</kbd></td><td>Snip, Record, Text</td></tr>
+        <tr><td><kbd>1</kbd>–<kbd>5</kbd></td><td>Rectangle, window, element, freeform, full screen</td></tr>
+        <tr><td><kbd>Enter</kbd></td><td>Take the current selection, or the whole display</td></tr>
+        <tr><td><kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd></td><td>Nudge the selection 1 px. Shift for 10 px</td></tr>
+        <tr><td><kbd>Space</kbd> held</td><td>Move the selection while dragging</td></tr>
+        <tr><td><kbd>C</kbd></td><td>Copy the color under the loupe</td></tr>
+        <tr><td><kbd>M</kbd><kbd>A</kbd></td><td>Mic and system audio, in Record</td></tr>
+        <tr><td><kbd>Tab</kbd></td><td>Next display, in full screen</td></tr>
+        <tr><td><kbd>O</kbd></td><td>Open the FastSnip window</td></tr>
+        <tr><td><kbd>Esc</kbd> or right-click</td><td>Cancel</td></tr>
+      </table>
+    </div>
+  </div>
+  <p class="cap" id="cap"></p>
+</section>
+
+<!-- LIVE TEXT DEMO -->
+<section id="livetext">
+  <div><div class="eyebrow">Text mode</div><h2>Live Text demo</h2></div>
+  <p class="cap">Text mode doesn't copy anything by itself. It turns the text on screen into real, selectable text in place, like Live Text on iPhone, and you choose what to copy. Try it: drag a box over the page below, or press <b>Whole screen</b>. Then drag across words, double-click a word, triple-click a line, or press <kbd>Ctrl</kbd><kbd>A</kbd>. Copy with the bar or <kbd>Ctrl</kbd><kbd>C</kbd>.</p>
+  <div class="scroll">
+    <div class="lt" id="lt" tabindex="0" aria-label="Live Text demo. Drag to pick an area, then select words.">
+      <div class="lt-screen">
+        <div class="lt-win">
+          <div class="tt"><i></i>Release notes · Edge</div>
+          <div class="lt-doc" data-ocr>
+            <p class="lt-h">FastSnip 1.4 release notes</p>
+            <p>The overlay now opens in under 16 ms on most PCs. Text is read the moment the screen freezes, so it's ready before you let go of the mouse.</p>
+            <p>Fixed: window capture now crops rounded corners and shadows cleanly.</p>
+            <p>New: search your screenshots by the words inside them.</p>
+            <p>Questions? Write to support@example.com or visit example.com/help</p>
+            <p class="lt-code">winget install FastSnip.FastSnip</p>
+          </div>
+        </div>
+      </div>
+      <div class="lt-cut" id="lt-cut" hidden></div>
+      <div class="lt-layer" id="lt-layer"></div>
+      <div class="lt-hint" id="lt-hint">Drag a box over any text</div>
+      <div class="lt-bar" id="lt-bar" hidden>
+        <button type="button" class="p" id="lt-copy"><i data-lucide="copy"></i><span id="lt-copy-l">Copy</span></button>
+        <button type="button" id="lt-all"><i data-lucide="text-select"></i>Select all</button>
+        <button type="button" id="lt-link" hidden><i data-lucide="link"></i><span id="lt-link-l">Open link</span></button>
+        <button type="button" id="lt-search" aria-label="Search the web"><i data-lucide="search"></i></button>
+      </div>
+      <div class="lt-toast" id="lt-toast" hidden></div>
+    </div>
+  </div>
+  <div class="lt-ctl">
+    <button type="button" class="btns" id="lt-whole"><i data-lucide="monitor"></i>Whole screen</button>
+    <button type="button" class="btns" id="lt-reset"><i data-lucide="rotate-ccw"></i>Start over</button>
+    <label class="lt-tog"><input type="checkbox" id="lt-lines"> Keep line breaks</label>
+  </div>
+  <div class="card lt-clip">
+    <div class="lt-clip-h"><i data-lucide="clipboard"></i>Clipboard</div>
+    <pre id="lt-clip">Nothing copied yet. Selecting text doesn't touch the clipboard.</pre>
+  </div>
+  <ul class="notes small muted">
+    <li>Words are already read when the screen freezes, so the boxes show up the instant you let go of the mouse.</li>
+    <li>Selection follows reading order, like normal text, so dragging from one line to the next picks up everything in between.</li>
+    <li>Links and email addresses are detected. When one is selected, the bar offers to open it.</li>
+    <li>Click outside the area to pick a new one. <kbd>Esc</kbd> closes the overlay.</li>
+  </ul>
+</section>
+
+<!-- TOOLBAR STATES -->
+<section>
+  <div><div class="eyebrow">Toolbar</div><h2>Toolbar in each mode</h2></div>
+  <p class="cap">Always centered at the top of the display with the mouse, 10 px from the edge. It's drawn on the overlay, never captured: the image is cut from the frozen frame, and while recording the toolbar is replaced by the recording pill, which is excluded from capture.</p>
+  <div class="states" style="grid-template-columns:1fr">
+    <div class="state"><div class="lbl"><span class="t">Snip</span>Default after the hotkey</div><div class="tile" id="t-snip"></div></div>
+    <div class="state"><div class="lbl"><span class="t">Record</span>Mic and audio toggles appear</div><div class="tile" id="t-rec"></div></div>
+    <div class="state"><div class="lbl"><span class="t">Text</span>Same shapes, reads text instead</div><div class="tile" id="t-txt"></div></div>
+  </div>
+  <div class="states">
+    <div class="state"><div class="lbl"><span class="t">Hover</span>Tooltip after 400 ms</div><div class="tile"><div style="display:flex;flex-direction:column;align-items:center;gap:6px"><div class="tb static" style="padding:6px"><div class="row"><div class="kb"><button class="b" type="button" style="background:var(--hover)"><i data-lucide="app-window"></i></button><span class="k">2</span></div></div></div><span class="badge" style="position:static">Window · 2</span></div></div></div>
+    <div class="state"><div class="lbl"><span class="t">Focus</span>Keyboard ring</div><div class="tile"><div class="tb static"><div class="row"><div class="kb"><button class="b focus" type="button"><i data-lucide="lasso"></i></button><span class="k">4</span></div></div></div></div></div>
+    <div class="state"><div class="lbl"><span class="t">Toggle off</span>Mic muted</div><div class="tile"><div class="tb static"><div class="row"><div class="kb"><button class="b tog off" type="button"><i data-lucide="mic-off"></i></button><span class="k">M</span></div><div class="kb"><button class="b tog" type="button"><i data-lucide="volume-2"></i></button><span class="k">A</span></div></div></div></div></div>
+  </div>
+</section>
+
+<!-- CAPTURE STATES -->
+<section>
+  <div><div class="eyebrow">Capture</div><h2>Full screen, recording and done</h2></div>
+  <p class="cap">Full screen works for both screenshots and recordings. With more than one display, a display picker sits under the toolbar. <kbd>Tab</kbd> or a click picks one, and <kbd>Enter</kbd> takes it.</p>
+  <div class="states">
+    <div class="state"><div class="lbl"><span class="t">Full</span>Display picker</div>
+      <div class="tile"><div style="display:flex;flex-direction:column;gap:8px;align-items:center"><div class="disp"><div class="m on">1</div><div class="m">2</div></div><span class="badge" style="position:static">Display 1 · 2560 × 1440 · Enter</span></div></div></div>
+    <div class="state"><div class="lbl"><span class="t">REC</span>Recording pill</div>
+      <div class="tile"><div class="recpill"><span class="dot"></span><span class="time">00:42</span><button class="b" type="button" aria-label="Mute mic"><i data-lucide="mic"></i></button><button class="b" type="button" aria-label="Pause"><i data-lucide="pause"></i></button><button class="b" type="button" aria-label="Stop" style="color:var(--rec)"><i data-lucide="square"></i></button></div></div></div>
+    <div class="state"><div class="lbl"><span class="t">3 · 2 · 1</span>Countdown before recording</div>
+      <div class="tile"><div style="width:72px;height:72px;border-radius:50%;background:var(--bar);border:1px solid var(--bar-line);box-shadow:var(--shadow);display:flex;align-items:center;justify-content:center;font:700 34px var(--f-disp)">3</div></div></div>
+  </div>
+  <div class="states">
+    <div class="state"><div class="lbl"><span class="t">Toast</span>After a screenshot</div>
+      <div class="tile"><div class="toast"><div class="thumb"></div><div style="min-width:0"><div class="h"><i data-lucide="circle-check"></i>Copied and saved</div><div class="s">Screenshots\2026-10-09 14.32.07.png</div><div class="acts"><button class="b" type="button" aria-label="Edit"><i data-lucide="pen-line"></i></button><button class="b" type="button" aria-label="Copy text"><i data-lucide="scan-text"></i></button><button class="b" type="button" aria-label="Show in folder"><i data-lucide="folder-open"></i></button><button class="b" type="button" aria-label="Delete"><i data-lucide="trash-2"></i></button></div><div class="prog"><i></i></div></div></div></div></div>
+    <div class="state"><div class="lbl"><span class="t">Toast</span>After a recording</div>
+      <div class="tile"><div class="toast"><div class="thumb"><span class="dur">0:42</span></div><div style="min-width:0"><div class="h"><i data-lucide="circle-check"></i>Recording saved to folder</div><div class="s">Screen Recordings\2026-10-09 14.33.50.mp4</div><div class="acts"><button class="b" type="button" aria-label="Trim"><i data-lucide="scissors"></i></button><button class="b" type="button" aria-label="Show in folder"><i data-lucide="folder-open"></i></button><button class="b" type="button" aria-label="Delete"><i data-lucide="trash-2"></i></button></div><div class="prog"><i></i></div></div></div></div></div>
+    <div class="state"><div class="lbl"><span class="t">Text</span>After copying text</div>
+      <div class="tile"><div class="toast" style="width:250px"><div style="min-width:0"><div class="h"><i data-lucide="circle-check"></i>Copied 38 words</div><div class="s" style="font-family:var(--f-ui);font-size:12.5px">"Release notes for build 1.4. The overlay now opens…"</div></div></div></div></div>
+  </div>
+  <ul class="notes small muted">
+    <li>Toast sits bottom-right, above the taskbar, for 4 seconds. Hovering pauses the timer. The bar along the bottom shows the time left.</li>
+    <li>Clicking the thumbnail or the pen opens the editor. Nothing opens by itself.</li>
+    <li>The recording frame and pill use display-affinity exclusion, so they never appear in the video.</li>
+    <li>Full screen recording can also start without the toolbar, from its own shortcut (default <kbd>Win</kbd><kbd>Shift</kbd><kbd>R</kbd>).</li>
+  </ul>
+</section>
+
+<!-- TRAY -->
+<section>
+  <div><div class="eyebrow">Tray</div><h2>Tray menu</h2></div>
+  <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start">
+    <div class="menu">
+      <div class="mi on"><i data-lucide="layout-grid"></i>Open FastSnip</div>
+      <div class="md"></div>
+      <div class="mi"><i data-lucide="camera"></i>New snip<span class="kk">PrtSc</span></div>
+      <div class="mi"><i data-lucide="monitor"></i>Snip full screen</div>
+      <div class="mi"><i data-lucide="video"></i>Record screen<span class="kk">Win+Shift+R</span></div>
+      <div class="mi"><i data-lucide="scan-text"></i>Grab text</div>
+      <div class="md"></div>
+      <div class="mi"><i data-lucide="settings"></i>Settings</div>
+      <div class="mi"><i data-lucide="power"></i>Quit FastSnip</div>
+    </div>
+    <ul class="notes small muted" style="flex:1 1 280px">
+      <li>Left-click the tray icon opens the FastSnip window. Right-click opens this menu.</li>
+      <li>The icon turns red with a dot while recording, and clicking it then stops the recording.</li>
+      <li>In "Start only when needed" mode there's no tray icon. The grid button on the toolbar (<kbd>O</kbd>) opens the same window.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- APP: GALLERY -->
+<section>
+  <div><div class="eyebrow">App window</div><h2>Captures</h2></div>
+  <p class="cap">Home screen of the window. Lists what's in the two save folders, newest first, grouped by day. Double-click opens the editor. Right-click gives copy, copy text, show in folder, rename, delete.</p>
+  <div class="scroll"><div class="app" style="min-width:640px">
+    <div class="titlebar"><span class="tl"><i data-lucide="crop" class="logo"></i>FastSnip</span><span class="wb"><span><i data-lucide="minus"></i></span><span><i data-lucide="square"></i></span><span><i data-lucide="x"></i></span></span></div>
+    <div class="body">
+      <nav class="nav">
+        <a class="on"><i data-lucide="images"></i>Captures</a>
+        <a><i data-lucide="pen-line"></i>Editor</a>
+        <a><i data-lucide="settings"></i>Settings</a>
+        <span class="sp"></span>
+        <a><i data-lucide="info"></i>About</a>
+      </nav>
+      <div class="pane">
+        <div class="ph"><div class="filters"><span class="on">All · 128</span><span>Images · 104</span><span>Videos · 24</span></div><div style="display:flex;gap:6px"><span class="btns"><i data-lucide="search"></i>Search text</span><span class="btnp"><i data-lucide="camera"></i>New snip</span></div></div>
+        <div class="day">Today</div>
+        <div class="gal">
+          <div class="gi on"><div class="gth"><span class="gty"><i data-lucide="image"></i>PNG</span></div><div class="gm"><span>14:32</span><span>1184×412</span></div></div>
+          <div class="gi"><div class="gth"><span class="gty"><i data-lucide="film"></i>0:42</span></div><div class="gm"><span>13:05</span><span>2560×1440</span></div></div>
+          <div class="gi"><div class="gth"><span class="gty"><i data-lucide="image"></i>PNG</span></div><div class="gm"><span>11:48</span><span>860×540</span></div></div>
+          <div class="gi"><div class="gth"><span class="gty"><i data-lucide="image"></i>PNG</span></div><div class="gm"><span>09:12</span><span>2560×1440</span></div></div>
+        </div>
+        <div class="day">Yesterday</div>
+        <div class="gal">
+          <div class="gi"><div class="gth"><span class="gty"><i data-lucide="film"></i>2:10</span></div><div class="gm"><span>18:40</span><span>1920×1080</span></div></div>
+          <div class="gi"><div class="gth"><span class="gty"><i data-lucide="image"></i>PNG</span></div><div class="gm"><span>16:02</span><span>640×320</span></div></div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <p class="cap">"Search text" finds screenshots by the words in them. Text read during capture is saved alongside each image, so search is instant.</p>
+</section>
+
+<!-- APP: EDITOR -->
+<section>
+  <div><div class="eyebrow">App window</div><h2>Editor</h2></div>
+  <p class="cap">Opens only from the toast or the gallery. Tools on the left, options for the current tool on the right. <kbd>Ctrl</kbd><kbd>C</kbd> copies the edited image, <kbd>Ctrl</kbd><kbd>S</kbd> saves over the original, and <kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>S</kbd> saves a copy.</p>
+  <div class="scroll"><div class="app" style="min-width:640px">
+    <div class="titlebar"><span class="tl"><i data-lucide="crop" class="logo"></i>2026-10-09 14.32.07.png</span><span style="display:flex;gap:6px;align-items:center"><span class="btns"><i data-lucide="copy"></i>Copy</span><span class="btnp"><i data-lucide="save"></i>Save</span><span class="wb"><span><i data-lucide="minus"></i></span><span><i data-lucide="square"></i></span><span><i data-lucide="x"></i></span></span></span></div>
+    <div class="editor">
+      <div class="rail" id="rail">
+        <button class="b" type="button" title="Crop · C" aria-label="Crop"><i data-lucide="crop"></i></button>
+        <button class="b" type="button" title="Pen · P" aria-label="Pen"><i data-lucide="pen-line"></i></button>
+        <button class="b" type="button" title="Highlighter · H" aria-label="Highlighter"><i data-lucide="highlighter"></i></button>
+        <button class="b on" type="button" title="Arrow · A" aria-label="Arrow"><i data-lucide="move-up-right"></i></button>
+        <button class="b" type="button" title="Box · B" aria-label="Box"><i data-lucide="square"></i></button>
+        <button class="b" type="button" title="Text · T" aria-label="Text"><i data-lucide="type"></i></button>
+        <button class="b" type="button" title="Blur · X" aria-label="Blur"><i data-lucide="grid-2x2"></i></button>
+        <button class="b" type="button" title="Step numbers · N" aria-label="Step numbers"><i data-lucide="list-ordered"></i></button>
+        <span class="sep2"></span>
+        <button class="b" type="button" title="Undo · Ctrl+Z" aria-label="Undo"><i data-lucide="undo-2"></i></button>
+        <button class="b" type="button" title="Redo · Ctrl+Y" aria-label="Redo"><i data-lucide="redo-2"></i></button>
+      </div>
+      <div class="canvas">
+        <div class="shot">
+          <div class="w" style="left:6%;top:8%;width:72%;height:80%"><div class="tt"><i></i>Settings · App</div><div class="ln" style="width:55%"></div><div class="ln" style="width:80%"></div><div class="ln" style="width:42%"></div></div>
+          <div class="ann-hl" style="left:9%;top:30%;width:30%"></div>
+          <div class="ann-blur" style="left:10%;top:56%;width:22%;height:11%"></div>
+          <div class="ann-box" style="left:46%;top:46%;width:26%;height:22%"></div>
+          <div class="ann-num" style="left:43%;top:41%">1</div>
+          <div class="ann-arrow" style="left:80%;top:30%;width:70px;transform:rotate(140deg)"></div>
+          <div class="ann-txt" style="left:56%;top:74%">Click here</div>
+        </div>
+        <div class="tctl"><span>1184 × 412 · 100%</span><span>Arrow · drag to draw, Shift snaps to 45°</span></div>
+      </div>
+      <div class="props">
+        <div><div class="pl">Color</div><div class="sw"><i class="on" style="background:#e5383b"></i><i style="background:#f59f00"></i><i style="background:#1d8a4e"></i><i style="background:#0b7a73"></i><i style="background:#3b5bdb"></i><i style="background:#121a1a"></i><i style="background:#ffffff"></i></div></div>
+        <div><div class="pl">Thickness · 4 px</div><div class="slider"></div></div>
+        <div><div class="pl">Arrow style</div><div class="seg2"><span class="on">Straight</span><span>Curved</span></div></div>
+        <div><div class="pl">Shadow</div><span class="tg off"></span></div>
+      </div>
+    </div>
+  </div></div>
+  <p class="cap">For recordings, the canvas becomes a video player with a trim bar. Cuts snap to keyframes, so saving is a copy with no re-encode and takes under a second. Turning off snapping cuts at the exact frame but re-encodes.</p>
+  <div class="card" style="display:flex;flex-direction:column;gap:10px">
+    <div class="trim"><div class="keep"></div><div class="ph2"></div></div>
+    <div class="tctl"><span>00:05.0 → 00:33.6 · keeps 28.6 s of 42.0 s</span><span style="display:flex;gap:6px"><span class="btns"><i data-lucide="magnet"></i>Snap to keyframes</span><span class="btnp"><i data-lucide="scissors"></i>Save trimmed</span></span></div>
+  </div>
+</section>
+
+<!-- APP: SETTINGS -->
+<section>
+  <div><div class="eyebrow">App window</div><h2>Settings</h2></div>
+  <p class="cap">One scrolling page with groups, in this order: Background, Shortcuts, Recording, Text recognition, Saving, Look. The background choice states its cost in plain words.</p>
+  <div class="scroll"><div class="app" style="min-width:640px">
+    <div class="titlebar"><span class="tl"><i data-lucide="crop" class="logo"></i>FastSnip</span><span class="wb"><span><i data-lucide="minus"></i></span><span><i data-lucide="square"></i></span><span><i data-lucide="x"></i></span></span></div>
+    <div class="body">
+      <nav class="nav">
+        <a><i data-lucide="images"></i>Captures</a>
+        <a><i data-lucide="pen-line"></i>Editor</a>
+        <a class="on"><i data-lucide="settings"></i>Settings</a>
+        <span class="sp"></span>
+        <a><i data-lucide="info"></i>About</a>
+      </nav>
+      <div class="pane">
+        <div class="gh">Background</div>
+        <div class="modecards">
+          <div class="mc on"><div class="mt"><i data-lucide="zap"></i>Keep ready in the tray</div><span class="spd">opens in ~15 ms</span><p>Stays loaded with a tray icon. About 5–10 MB of memory when idle and no CPU use. Text is ready the moment you let go of the mouse.</p></div>
+          <div class="mc"><div class="mt"><i data-lucide="moon"></i>Start only when needed</div><span class="spd slow">opens in ~100–200 ms</span><p>No tray icon. A tiny shortcut listener keeps running (about 1 MB). Each capture starts the app first, and text takes about 150 ms longer.</p></div>
+        </div>
+        <div class="gh">Shortcuts</div>
+        <div class="group set">
+          <div class="sr"><div class="rl"><b>Open toolbar</b><small>Replaces Windows' own snipping shortcuts</small></div><div style="display:flex;gap:6px;flex-wrap:wrap"><span class="kbx">PrtSc</span><span class="kbx">Win + Shift + S</span><span class="kbx add"><i data-lucide="plus"></i>Add</span></div></div>
+          <div class="sr"><div class="rl"><b>Snip full screen</b><small>Skips the toolbar</small></div><span class="kbx add"><i data-lucide="plus"></i>Add</span></div>
+          <div class="sr"><div class="rl"><b>Start or stop full screen recording</b></div><span class="kbx">Win + Shift + R</span></div>
+          <div class="sr"><div class="rl"><b>Grab text</b><small>Opens the toolbar in Text</small></div><span class="kbx" style="border-color:var(--accent);color:var(--accent)"><i data-lucide="keyboard"></i>Press keys…</span></div>
+        </div>
+        <div class="gh">Recording</div>
+        <div class="group set">
+          <div class="sr"><div class="rl"><b>Frame rate</b></div><div class="seg2"><span>30</span><span class="on">60</span><span>120</span></div></div>
+          <div class="sr"><div class="rl"><b>Quality</b><small>About 18 MB per minute at 1440p, 60 fps</small></div><span class="sel">High<i data-lucide="chevron-down"></i></span></div>
+          <div class="sr"><div class="rl"><b>Format</b><small>Uses your graphics card's encoder</small></div><span class="sel">MP4 · H.264<i data-lucide="chevron-down"></i></span></div>
+          <div class="sr"><div class="rl"><b>Microphone</b></div><span class="sel">Default · Headset mic<i data-lucide="chevron-down"></i></span></div>
+          <div class="sr"><div class="rl"><b>Record system audio</b></div><span class="tg"></span></div>
+          <div class="sr"><div class="rl"><b>Show cursor</b></div><span class="tg"></span></div>
+          <div class="sr"><div class="rl"><b>Highlight clicks</b></div><span class="tg off"></span></div>
+          <div class="sr"><div class="rl"><b>Countdown</b></div><div class="seg2"><span>Off</span><span class="on">3 s</span><span>5 s</span></div></div>
+        </div>
+        <div class="gh">Text recognition</div>
+        <div class="group set">
+          <div class="sr"><div class="rl"><b>Engine</b><small>Picked by the speed test · 24 ms on this PC</small></div><div style="display:flex;gap:6px;flex-wrap:wrap"><span class="sel">Automatic (fastest)<i data-lucide="chevron-down"></i></span><span class="btns"><i data-lucide="refresh-cw"></i>Run test again</span></div></div>
+          <div class="sr"><div class="rl"><b>Read text as soon as the screen freezes</b><small>Text is ready before you finish selecting. Uses a little CPU on each capture.</small></div><span class="tg"></span></div>
+          <div class="sr"><div class="rl"><b>Keep line breaks when copying</b></div><span class="tg off"></span></div>
+        </div>
+        <div class="gh">Saving</div>
+        <div class="group set">
+          <div class="sr"><div class="rl"><b>Screenshots</b><small class="mono">Pictures\Screenshots</small></div><span class="btns"><i data-lucide="folder"></i>Change</span></div>
+          <div class="sr"><div class="rl"><b>Recordings</b><small class="mono">Videos\Screen Recordings</small></div><span class="btns"><i data-lucide="folder"></i>Change</span></div>
+          <div class="sr"><div class="rl"><b>Show toast after capture</b></div><span class="tg"></span></div>
+        </div>
+        <div class="gh">Look</div>
+        <div class="group set">
+          <div class="sr"><div class="rl"><b>Theme</b></div><div class="seg2"><span class="on">Follow Windows</span><span>Light</span><span>Dark</span></div></div>
+          <div class="sr"><div class="rl"><b>Accent color</b><small>Now: <span data-acc-name></span>. Follow Windows uses your Windows accent.</small></div><div class="acc-pick" role="group" aria-label="Accent color"><button type="button" data-a="teal" style="background:#0b7a73" aria-label="Teal" title="Teal"></button><button type="button" data-a="blue" style="background:#0067c0" aria-label="Blue" title="Blue"></button><button type="button" data-a="violet" style="background:#6b4eff" aria-label="Violet" title="Violet"></button><button type="button" data-a="green" style="background:#1d7f3a" aria-label="Green" title="Green"></button><button type="button" data-a="orange" style="background:#c25400" aria-label="Orange" title="Orange"></button><button type="button" data-a="pink" style="background:#c2185b" aria-label="Pink" title="Pink"></button><button type="button" class="sys" data-a="system"><i data-lucide="monitor"></i>Follow Windows</button><input type="color" id="acc-c2" value="#0b7a73" aria-label="Custom accent color" title="Custom color"></div></div>
+          <div class="sr"><div class="rl"><b>Show magnifier while selecting</b></div><span class="tg"></span></div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+</section>
+
+<!-- SETUP -->
+<section>
+  <div><div class="eyebrow">First run</div><h2>Setup</h2></div>
+  <p class="cap">Four steps, under a minute. Each step has a default, so pressing Continue four times is a valid setup.</p>
+  <div class="scroll"><div class="app" style="min-width:600px">
+    <div class="titlebar"><span class="tl"><i data-lucide="crop" class="logo"></i>Set up FastSnip</span><span class="wb"><span><i data-lucide="x"></i></span></span></div>
+    <div class="pane">
+      <div class="steps"><span class="done"><span class="n">✓</span>Background</span><i></i><span class="done"><span class="n">✓</span>Shortcuts</span><i></i><span class="cur"><span class="n">3</span>Text speed test</span><i></i><span><span class="n">4</span>Done</span></div>
+      <div><h3>Finding the fastest text engine for this PC</h3><p class="muted small" style="margin-top:4px">Reading 4 sample images and one shot of your screen, 5 times each after a warm-up. Run 4 of 5.</p></div>
+      <div class="prog" style="height:6px"><i style="width:76%"></i></div>
+      <div style="overflow-x:auto">
+        <table class="bench">
+          <tr><th>Engine</th><th>Median</th><th style="width:32%"></th><th>Accuracy</th><th>Result</th></tr>
+          <tr class="win"><td><b style="font-weight:600">Windows AI Text Recognizer</b><br><small class="muted">Runs on the NPU</small></td><td>24 ms</td><td><span class="bm" style="width:30%"></span></td><td>98.9%</td><td style="color:var(--accent);font-weight:600">Selected</td></tr>
+          <tr><td><b style="font-weight:500">Windows.Media.Ocr</b><br><small class="muted">Runs on the CPU</small></td><td>71 ms</td><td><span class="bm g" style="width:84%"></span></td><td>97.4%</td><td class="muted">Fallback</td></tr>
+        </table>
+      </div>
+      <p class="small muted">Example numbers. Rule: the fastest engine wins unless it's more than 2 points less accurate. PCs without an NPU skip straight to Windows.Media.Ocr.</p>
+      <div style="display:flex;justify-content:flex-end;gap:8px"><span class="btns">Back</span><span class="btnp">Continue<i data-lucide="arrow-right"></i></span></div>
+    </div>
+  </div></div>
+</section>
+
+<!-- EDGE CASES -->
+<section>
+  <div><div class="eyebrow">Edge cases</div><h2>When something goes wrong</h2></div>
+  <div class="edge">
+    <div class="ec"><div class="eh warn"><i data-lucide="keyboard"></i>Shortcut already in use</div><p>Win + Shift + R is taken by Xbox Game Bar. Pick another or turn it off in Game Bar.</p><div class="acts"><span class="btns">Choose another</span></div></div>
+    <div class="ec"><div class="eh warn"><i data-lucide="printer"></i>Windows still opens its own tool on PrtSc</div><p>Turn off "Use the Print screen key to open screen capture" in Windows Settings, then press PrtSc again.</p><div class="acts"><span class="btns"><i data-lucide="external-link"></i>Open Windows Settings</span></div></div>
+    <div class="ec"><div class="eh info"><i data-lucide="scan-text"></i>No text found</div><p>Shown inside the selection for 1.5 seconds. Try a bigger area, or zoom the page and try again.</p></div>
+    <div class="ec"><div class="eh warn"><i data-lucide="folder-x"></i>Save folder is missing</div><p>Pictures\Screenshots no longer exists. The image is on your clipboard. Choose a folder to keep saving.</p><div class="acts"><span class="btnp">Choose folder</span><span class="btns">Recreate it</span></div></div>
+    <div class="ec"><div class="eh info"><i data-lucide="cpu"></i>Text Recognizer not ready</div><p>Windows is still downloading the model. FastSnip uses Windows.Media.Ocr until it's ready, then switches automatically.</p></div>
+    <div class="ec"><div class="eh warn"><i data-lucide="gamepad-2"></i>Exclusive full screen game</div><p>The frame is grabbed first, so the screenshot always works. The overlay may make the game minimize. Use Snip full screen or the recording shortcut to skip the overlay.</p></div>
+  </div>
+</section>
+
+<!-- TOKENS -->
+<section>
+  <div><div class="eyebrow">Tokens</div><h2>Color, type, shape and motion</h2></div>
+  <p class="cap">One set of tokens shared by the Rust overlay and the WinUI app. Swatches show light on the left and dark on the right.</p>
+  <div class="tok">
+    <div class="sw2"><div class="c"><i style="background:var(--accent)"></i></div><div class="m"><b>Accent · a setting</b><span>Default teal #0B7A73 · #3CC4B9</span></div></div>
+    <div class="sw2"><div class="c"><i style="background:var(--accent-soft)"></i></div><div class="m"><b>Accent soft</b><span>16% accent on surface</span></div></div>
+    <div class="sw2"><div class="c"><i style="background:#d93636"></i><i style="background:#ff5c5c"></i></div><div class="m"><b>Record</b><span>#D93636 · #FF5C5C</span></div></div>
+    <div class="sw2"><div class="c"><i style="background:#fbfdfd"></i><i style="background:#1c2424"></i></div><div class="m"><b>Toolbar surface</b><span>#FBFDFD · #1C2424 · 97%</span></div></div>
+    <div class="sw2"><div class="c"><i style="background:#121a1a"></i><i style="background:#e6eded"></i></div><div class="m"><b>Text</b><span>#121A1A · #E6EDED</span></div></div>
+    <div class="sw2"><div class="c"><i style="background:rgba(6,16,16,.46)"></i><i style="background:rgba(0,0,0,.52)"></i></div><div class="m"><b>Overlay dim</b><span>46% · 52% black</span></div></div>
+  </div>
+  <div class="grid2" style="grid-template-columns:minmax(0,1fr) minmax(0,1fr)">
+    <div class="card">
+      <h3 style="margin-bottom:10px">Type · Segoe UI Variable</h3>
+      <div class="scale">
+        <div><span class="sn">Title · 28 / Display 600</span><span style="font:600 28px/1.2 var(--f-disp)">Captures</span></div>
+        <div><span class="sn">Subtitle · 20 / Display 600</span><span style="font:600 20px var(--f-disp)">Recording</span></div>
+        <div><span class="sn">Body · 14 / Text 400</span><span style="font:400 14px var(--f-ui)">Show cursor</span></div>
+        <div><span class="sn">Caption · 12 / Text 400</span><span style="font:400 12px var(--f-ui);color:var(--muted)">Uses your graphics card</span></div>
+        <div style="border-bottom:0"><span class="sn">Key hint · 10 / Cascadia Mono</span><span style="font:500 10px var(--f-mono)">1 2 3 4 5 · Esc</span></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3 style="margin-bottom:10px">Shape and spacing</h3>
+      <table class="keys">
+        <tr><td>Toolbar corner</td><td class="mono">12 px</td></tr>
+        <tr><td>Buttons, menus</td><td class="mono">8 px</td></tr>
+        <tr><td>Cards, toasts</td><td class="mono">10–12 px</td></tr>
+        <tr><td>Toolbar button</td><td class="mono">36 × 34 px, 18 px icon</td></tr>
+        <tr><td>Spacing steps</td><td class="mono">2 · 4 · 6 · 8 · 12 · 16 · 24</td></tr>
+        <tr><td>Icons</td><td>Lucide, 1.9 px stroke</td></tr>
+      </table>
+    </div>
+  </div>
+  <div class="card">
+    <h3 style="margin-bottom:8px">Speed and motion budget</h3>
+    <div style="overflow-x:auto">
+    <table class="budget">
+      <tr><th>Moment</th><th>Target</th><th>How</th></tr>
+      <tr><td>Hotkey to frozen overlay on screen</td><td class="n">≤ 16 ms</td><td>Overlay window and GPU device kept alive, frame grabbed before the window shows</td></tr>
+      <tr><td>Toolbar appears</td><td class="n">0 ms</td><td>No entrance animation. It's there in the first frame</td></tr>
+      <tr><td>Mouse up to text ready</td><td class="n">≈ 0 ms</td><td>Text already read on freeze, then filtered to the selection</td></tr>
+      <tr><td>Mouse up to clipboard and file</td><td class="n">≤ 30 ms</td><td>Clipboard first, PNG written on a background thread</td></tr>
+      <tr><td>Selection, hover highlight</td><td class="n">every frame</td><td>No easing, follows the mouse 1:1</td></tr>
+      <tr><td>Toast in and out</td><td class="n">120 ms</td><td>Slide 8 px and fade. Off when Windows animations are off</td></tr>
+      <tr><td>App window open</td><td class="n">≤ 300 ms</td><td>Separate process, started only when asked</td></tr>
+    </table>
+    </div>
+  </div>
+</section>
+
+</div>
+
+<script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+<script>
+(function(){
+  var root=document.documentElement, tbtns=document.querySelectorAll('.theme button');
+  function setTheme(t){
+    if(t==='system') root.removeAttribute('data-theme'); else root.setAttribute('data-theme',t);
+    tbtns.forEach(function(b){b.setAttribute('aria-pressed',String(b.dataset.t===t));});
+    try{localStorage.setItem('fsd-theme',t);}catch(e){}
+  }
+  var saved='system'; try{saved=localStorage.getItem('fsd-theme')||'system';}catch(e){}
+  setTheme(saved);
+  tbtns.forEach(function(b){b.addEventListener('click',function(){setTheme(b.dataset.t);});});
+
+  /* static toolbar copies for the state strip */
+  var tb=document.getElementById('tb');
+  function cloneTb(target,intent){
+    var c=tb.cloneNode(true); c.removeAttribute('id'); c.classList.add('static');
+    c.querySelectorAll('[id]').forEach(function(n){n.removeAttribute('id');});
+    c.querySelectorAll('.seg button').forEach(function(b){b.classList.toggle('on',b.dataset.i===intent);});
+    c.querySelectorAll('.recx').forEach(function(n){n.hidden=intent!=='record';});
+    if(intent==='text'){c.querySelectorAll('.row .b').forEach(function(b){b.classList.toggle('on',b.dataset.s==='rect');});}
+    document.getElementById(target).appendChild(c);
+  }
+  cloneTb('t-snip','snip'); cloneTb('t-rec','record'); cloneTb('t-txt','text');
+
+  /* live overlay */
+  var stage=document.getElementById('stage'), sel=document.getElementById('sel'), cap=document.getElementById('cap');
+  var state={intent:'snip',shape:'rect'};
+  var R={rect:{l:20,t:34,w:42,h:36},window:{l:52,t:20,w:42,h:62},element:{l:10,t:68,w:16,h:7},free:{l:28,t:30,w:38,h:44},full:{l:0,t:0,w:100,h:100}};
+  var W=2560,H=1440;
+  var caps={
+    rect:'Rectangle. Drag to draw, then fix the edges with the handles or arrow keys. The loupe shows the exact pixel.',
+    window:'Window. Hover highlights the window under the mouse, with shadows and rounded corners cropped cleanly. Click to take it.',
+    element:'Element. Hover finds the button, panel or web element under the mouse and names it. Click to take it.',
+    free:'Freeform. Draw any shape. Everything outside it is transparent in the PNG.',
+    full:'Full screen. Click, or press Enter, to take the display under the mouse. Tab moves to the next display.'
+  };
+  var icaps={snip:' Every screenshot is copied to the clipboard and saved to your Screenshots folder automatically.',record:' Press Enter or click Start. The video is saved to Screen Recordings when you stop. Nothing goes to the clipboard.',text:' Words become selectable in place. Nothing is copied until you select and copy. Try the Live Text demo below.'};
+  function px(v,a){return Math.round(v/100*a);}
+  function el(cls,css,html){var d=document.createElement('div');d.className=cls;if(css)d.style.cssText=css;if(html)d.innerHTML=html;return d;}
+  function words(r,n){
+    var out=[],rows=Math.max(1,Math.min(n,Math.floor(r.h/7))),seed=7;
+    for(var i=0;i<rows;i++){
+      var x=r.l+2.5, y=r.t+4+i*6.2; if(y>r.t+r.h-5)break;
+      while(x<r.l+r.w-6){seed=(seed*37+11)%97;var ww=4+seed%10; if(x+ww>r.l+r.w-2)break;
+        out.push({x:x,y:y,w:ww,s:(i===1||(i===0&&x>r.l+r.w*0.3)||(i===2&&x<r.l+r.w*0.4))});x+=ww+1.4;}
+    }
+    return out;
+  }
+  function render(){
+    sel.innerHTML='';
+    var r=R[state.shape], I=state.intent;
+    var pos='left:'+r.l+'%;top:'+r.t+'%;width:'+r.w+'%;height:'+r.h+'%';
+    if(state.shape==='free'){
+      sel.appendChild(el('dimall'));
+      sel.insertAdjacentHTML('beforeend','<svg class="lasso" viewBox="0 0 100 100" preserveAspectRatio="none"><path d="M30 40 C 32 30, 46 28, 54 31 S 68 36, 65 48 S 60 70, 48 73 S 30 70, 29 58 S 28 45, 30 40 Z" fill="rgba(255,255,255,.14)" stroke="'+(I==='record'?'#ff5c5c':'#fff')+'" stroke-width=".45" stroke-dasharray="1.4 1" vector-effect="non-scaling-stroke" style="stroke-width:1.6px"/></svg>');
+    } else if(state.shape==='full'){
+      sel.appendChild(el('cut '+(I==='record'?'recsel':''),'left:0;top:0;width:100%;height:100%;outline-offset:-3px;outline-width:3px'+(I==='record'?'':';outline-color:var(--accent)')));
+    } else {
+      var cls='cut '+(I==='record'?'recsel':(state.shape==='rect'?'dash':'hl'));
+      sel.appendChild(el(cls,pos));
+      if(state.shape==='rect'&&I!=='record'){
+        [[r.l,r.t],[r.l+r.w,r.t],[r.l,r.t+r.h],[r.l+r.w,r.t+r.h],[r.l+r.w/2,r.t],[r.l+r.w/2,r.t+r.h],[r.l,r.t+r.h/2],[r.l+r.w,r.t+r.h/2]].forEach(function(p){sel.appendChild(el('handle','left:'+p[0]+'%;top:'+p[1]+'%'));});
+      }
+    }
+    var below=r.t+r.h+2, place=(below>84)?'top:'+(Math.max(r.t+r.h-12,30))+'%':'top:'+below+'%';
+    var left='left:'+Math.min(Math.max(r.l,1),60)+'%';
+    if(state.shape==='full'){place='top:44%';left='left:50%;transform:translateX(-50%)';}
+    if(I==='snip'){
+      var label=state.shape==='window'?'Docs · Edge · '+px(r.w,W)+' × '+px(r.h,H):state.shape==='element'?'Button · "Save changes" · Code':state.shape==='full'?'Display 1 · 2560 × 1440 · Enter':px(r.w,W)+' × '+px(r.h,H);
+      sel.appendChild(el('badge',left+';'+place,label));
+      if(state.shape==='rect'){
+        var lp=el('loupe','left:'+(r.l+r.w+1.5)+'%;top:'+(r.t+r.h-6)+'%');
+        var g='<div class="px">';
+        for(var y=0;y<9;y++)for(var x=0;x<9;x++){var c=(x<4&&y<4)?'var(--win)':(x===4||y===4)?'#ffffff':'var(--desk)';if(x===4&&y===4)c='var(--accent)';g+='<i style="background:'+c+'"></i>';}
+        lp.innerHTML=g+'</div><div class="lmeta"><span>'+px(r.l+r.w,W)+', '+px(r.t+r.h,H)+'</span><span>accent</span></div>';
+        sel.appendChild(lp);
+      }
+    } else if(I==='record'){
+      sel.appendChild(el('chipbar',left+';'+place,'<span class="r"><i data-lucide="circle-dot"></i>Start recording<span class="kk">Enter</span></span><span>'+(state.shape==='full'?'2560 × 1440':px(r.w,W)+' × '+px(r.h,H))+' · 60 fps</span><span><i data-lucide="mic"></i><i data-lucide="volume-2"></i></span>'));
+    } else {
+      words(r,6).forEach(function(w){sel.appendChild(el('word'+(w.s?' s':''),'left:'+w.x+'%;top:'+w.y+'%;width:'+w.w+'%;height:3.4%'));});
+      sel.appendChild(el('chipbar',left+';'+place,'<span class="p"><i data-lucide="copy"></i>Copy<span class="kk">Ctrl+C</span></span><span>Copy all</span><span><i data-lucide="wrap-text"></i>Keep lines</span><span><i data-lucide="search"></i></span>'));
+    }
+    cap.textContent=caps[state.shape]+icaps[I];
+    try{lucide.createIcons();}catch(e){}
+  }
+  document.querySelectorAll('#intent button').forEach(function(b){b.addEventListener('click',function(){
+    state.intent=b.dataset.i;
+    document.querySelectorAll('#intent button').forEach(function(x){x.classList.toggle('on',x===b);});
+    document.querySelectorAll('#tb .recx').forEach(function(n){n.hidden=state.intent!=='record';});
+    render();
+  });});
+  document.querySelectorAll('#shapes [data-s]').forEach(function(b){b.addEventListener('click',function(){
+    state.shape=b.dataset.s;
+    document.querySelectorAll('#shapes [data-s]').forEach(function(x){x.classList.toggle('on',x===b);});
+    render();
+  });});
+  document.querySelectorAll('.b.tog').forEach(function(b){b.addEventListener('click',function(){b.classList.toggle('off');});});
+  document.querySelectorAll('#rail .b').forEach(function(b,i){if(i<8)b.addEventListener('click',function(){document.querySelectorAll('#rail .b').forEach(function(x){x.classList.remove('on');});b.classList.add('on');});});
+
+  /* ---------- accent setting ---------- */
+  var PRE={teal:['#0b7a73','#3cc4b9'],blue:['#0067c0','#4cc2ff'],violet:['#6b4eff','#a594ff'],green:['#1d7f3a','#5fd08f'],orange:['#c25400','#ff9a4d'],pink:['#c2185b','#ff7fb0']};
+  var acc={k:'teal',c:'#0b7a73'};
+  try{var sa=JSON.parse(localStorage.getItem('fsd-accent')||'null');if(sa&&sa.k)acc=sa;}catch(e){}
+  function isDark(){var t=root.getAttribute('data-theme');if(t)return t==='dark';return !!(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches);}
+  function hexRgb(h){h=h.replace('#','');if(h.length===3)h=h.split('').map(function(c){return c+c;}).join('');var n=parseInt(h,16);return [n>>16&255,n>>8&255,n&255];}
+  function rgbHex(a){return '#'+a.map(function(v){return ('0'+Math.round(v).toString(16)).slice(-2);}).join('');}
+  function mix(h,w,t){var a=hexRgb(h),b=hexRgb(w);return rgbHex(a.map(function(v,i){return v*(1-t)+b[i]*t;}));}
+  function lum(h){var a=hexRgb(h).map(function(v){v/=255;return v<=.03928?v/12.92:Math.pow((v+.055)/1.055,2.4);});return .2126*a[0]+.7152*a[1]+.0722*a[2];}
+  function applyAccent(){
+    var dk=isDark(),v,on;
+    if(acc.k==='system'){
+      if(window.CSS&&CSS.supports&&CSS.supports('color','AccentColor')){v='AccentColor';on=CSS.supports('color','AccentColorText')?'AccentColorText':'#ffffff';}
+      else{v=PRE.blue[dk?1:0];on=lum(v)>.4?'#04121f':'#ffffff';}
+    } else if(acc.k==='custom'){
+      v=dk?mix(acc.c,'#ffffff',lum(acc.c)<.2?.3:0):acc.c; on=lum(v)>.4?'#0b1414':'#ffffff';
+    } else { v=PRE[acc.k][dk?1:0]; on=lum(v)>.4?'#06201d':'#ffffff'; }
+    root.style.setProperty('--accent',v); root.style.setProperty('--on-accent',on);
+    document.querySelectorAll('.acc-pick [data-a]').forEach(function(b){b.setAttribute('aria-pressed',String(b.dataset.a===acc.k));});
+    document.querySelectorAll('.acc-pick input[type=color]').forEach(function(i){i.value=acc.c;});
+    document.querySelectorAll('[data-acc-name]').forEach(function(n){n.textContent=acc.k==='system'?'Follow Windows':acc.k==='custom'?'Custom '+acc.c.toUpperCase():acc.k.charAt(0).toUpperCase()+acc.k.slice(1);});
+    try{localStorage.setItem('fsd-accent',JSON.stringify(acc));}catch(e){}
+  }
+  document.querySelectorAll('.acc-pick [data-a]').forEach(function(b){b.addEventListener('click',function(){acc.k=b.dataset.a;if(PRE[acc.k])acc.c=PRE[acc.k][0];applyAccent();});});
+  document.querySelectorAll('.acc-pick input[type=color]').forEach(function(i){i.addEventListener('input',function(){acc={k:'custom',c:i.value};applyAccent();});});
+  tbtns.forEach(function(b){b.addEventListener('click',applyAccent);});
+  try{matchMedia('(prefers-color-scheme: dark)').addEventListener('change',applyAccent);}catch(e){}
+  applyAccent();
+
+  /* ---------- live text demo ---------- */
+  var lt=document.getElementById('lt'), layer=document.getElementById('lt-layer'), cut=document.getElementById('lt-cut'),
+      hint=document.getElementById('lt-hint'), bar=document.getElementById('lt-bar'), toastEl=document.getElementById('lt-toast'),
+      clip=document.getElementById('lt-clip'), linesBox=document.getElementById('lt-lines');
+  var doc=lt.querySelector('[data-ocr]');
+  [].slice.call(doc.querySelectorAll('p')).forEach(function(p){
+    var parts=p.textContent.split(/(\s+)/); p.textContent='';
+    parts.forEach(function(t){ if(!t)return; if(/^\s+$/.test(t)){p.appendChild(document.createTextNode(t));return;} var s=document.createElement('span');s.className='wd';s.textContent=t;p.appendChild(s);});
+  });
+  var all=[], rec=[], region=null, phase='region', lsel=null, anchor=-1, dragging=false, start=null, boxes=[], toastT=0;
+  function measure(){
+    var base=lt.getBoundingClientRect(); all=[];
+    doc.querySelectorAll('.wd').forEach(function(s){var r=s.getBoundingClientRect();all.push({t:s.textContent,x:r.left-base.left,y:r.top-base.top,w:r.width,h:r.height});});
+    all.sort(function(a,b){return Math.abs(a.y-b.y)>4?a.y-b.y:a.x-b.x;});
+    var line=-1,lastY=-99; all.forEach(function(w){if(Math.abs(w.y-lastY)>4){line++;lastY=w.y;}w.line=line;});
+  }
+  function pt(e){var b=lt.getBoundingClientRect();return {x:e.clientX-b.left,y:e.clientY-b.top};}
+  function showHint(t){hint.textContent=t;hint.hidden=!t;}
+  function toast(t){toastEl.textContent=t;toastEl.hidden=false;clearTimeout(toastT);toastT=setTimeout(function(){toastEl.hidden=true;},1600);}
+  function reset(){phase='region';region=null;rec=[];lsel=null;layer.innerHTML='';boxes=[];cut.hidden=true;bar.hidden=true;showHint('Drag a box over any text');}
+  function setCut(r){cut.hidden=false;cut.style.left=r.x+'px';cut.style.top=r.y+'px';cut.style.width=r.w+'px';cut.style.height=r.h+'px';}
+  function recognize(r){
+    measure(); region=r;
+    rec=all.filter(function(w){var cx=w.x+w.w/2,cy=w.y+w.h/2;return cx>=r.x&&cx<=r.x+r.w&&cy>=r.y&&cy<=r.y+r.h;});
+    layer.innerHTML='';boxes=[];lsel=null;bar.hidden=true;
+    if(!rec.length){showHint('No text found. Try a bigger area');setTimeout(function(){if(!rec.length)reset();},1500);return;}
+    phase='select';
+    var reduce=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;
+    rec.forEach(function(w,i){var b=document.createElement('div');b.className='ocrw';b.dataset.i=i;
+      b.style.cssText='left:'+(w.x-2)+'px;top:'+(w.y-1)+'px;width:'+(w.w+4)+'px;height:'+(w.h+2)+'px;'+(reduce?'':'animation-delay:'+Math.min(i*4,150)+'ms');
+      if(/@|\.(com|app|org|net)/.test(w.t))b.classList.add('lnk');
+      layer.appendChild(b);boxes.push(b);});
+    showHint('Drag across words · double-click a word · Ctrl+A for all');
+    lt.focus({preventScroll:true});
+  }
+  function joinSel(){
+    if(!lsel)return '';var out='',prev=null;
+    for(var i=lsel[0];i<=lsel[1];i++){var w=rec[i];if(prev){out+=(w.line!==prev.line&&linesBox.checked)?'\n':' ';}out+=w.t;prev=w;}
+    return out;
+  }
+  function paint(){
+    boxes.forEach(function(b,i){b.classList.toggle('s',!!lsel&&i>=lsel[0]&&i<=lsel[1]);});
+    if(!lsel){bar.hidden=true;return;}
+    var n=lsel[1]-lsel[0]+1;
+    document.getElementById('lt-copy-l').textContent='Copy '+n+(n===1?' word':' words');
+    var txt=joinSel(), m=txt.match(/[\w.+-]+@[\w-]+\.\w+|[\w-]+\.(com|app|org|net)\/?\S*/);
+    var lb=document.getElementById('lt-link');lb.hidden=!m;
+    if(m)document.getElementById('lt-link-l').textContent=/@/.test(m[0])?'Email '+m[0]:'Open '+m[0];
+    var last=rec[lsel[1]], bw=lt.clientWidth;
+    bar.hidden=false;
+    var x=Math.max(8,Math.min(last.x-40,bw-bar.offsetWidth-8)), y=last.y+last.h+10;
+    if(y+bar.offsetHeight>lt.clientHeight-8)y=rec[lsel[0]].y-bar.offsetHeight-10;
+    bar.style.left=x+'px';bar.style.top=y+'px';
+    showHint('');
+  }
+  function wordAt(e){var el=document.elementFromPoint(e.clientX,e.clientY);if(!el||!el.classList||!el.classList.contains('ocrw'))return -1;return +el.dataset.i;}
+  function nearest(p){var best=-1,bd=1e9;rec.forEach(function(w,i){var dx=Math.max(w.x-p.x,0,p.x-(w.x+w.w)),dy=Math.max(w.y-p.y,0,p.y-(w.y+w.h));var d=dx*dx+dy*dy*4;if(d<bd){bd=d;best=i;}});return bd<900?best:-1;}
+  function inRegion(p){return region&&p.x>=region.x&&p.x<=region.x+region.w&&p.y>=region.y&&p.y<=region.y+region.h;}
+  lt.addEventListener('pointerdown',function(e){
+    if(bar.contains(e.target))return;
+    var p=pt(e);
+    if(phase==='select'&&inRegion(p)){
+      var i=wordAt(e); if(i<0)i=nearest(p);
+      if(i<0){lsel=null;paint();return;}
+      anchor=i;lsel=[i,i];dragging=true;lt.setPointerCapture(e.pointerId);paint();e.preventDefault();return;
+    }
+    reset(); phase='drawing'; start=p; dragging=true; lt.setPointerCapture(e.pointerId); setCut({x:p.x,y:p.y,w:0,h:0}); showHint(''); e.preventDefault();
+  });
+  lt.addEventListener('pointermove',function(e){
+    if(!dragging)return; var p=pt(e);
+    if(phase==='drawing'){setCut({x:Math.min(p.x,start.x),y:Math.min(p.y,start.y),w:Math.abs(p.x-start.x),h:Math.abs(p.y-start.y)});return;}
+    if(phase==='select'){var j=wordAt(e);if(j<0)j=nearest(p);if(j<0)return;lsel=[Math.min(anchor,j),Math.max(anchor,j)];paint();}
+  });
+  lt.addEventListener('pointerup',function(e){
+    if(!dragging)return; dragging=false; var p=pt(e);
+    if(phase==='drawing'){var r={x:Math.min(p.x,start.x),y:Math.min(p.y,start.y),w:Math.abs(p.x-start.x),h:Math.abs(p.y-start.y)};
+      if(r.w<12||r.h<12){reset();return;} setCut(r); recognize(r);}
+  });
+  lt.addEventListener('click',function(e){
+    if(phase!=='select'||bar.contains(e.target))return; var i=wordAt(e); if(i<0)return;
+    if(e.detail===2){lsel=[i,i];paint();}
+    else if(e.detail>=3){var L=rec[i].line,a=i,b=i;while(a>0&&rec[a-1].line===L)a--;while(b<rec.length-1&&rec[b+1].line===L)b++;lsel=[a,b];paint();}
+  });
+  function copySel(){
+    var t=joinSel(); if(!t)return; var n=lsel[1]-lsel[0]+1;
+    clip.textContent=t;
+    try{navigator.clipboard.writeText(t).then(function(){toast('Copied '+n+(n===1?' word':' words'));},function(){toast('Copied in demo · '+n+' words');});}catch(err){toast('Copied in demo · '+n+' words');}
+  }
+  function selectAll(){if(phase!=='select')return;lsel=[0,rec.length-1];paint();}
+  lt.addEventListener('keydown',function(e){
+    var k=e.key.toLowerCase();
+    if((e.ctrlKey||e.metaKey)&&k==='a'){if(phase==='select'){e.preventDefault();selectAll();}}
+    else if((e.ctrlKey||e.metaKey)&&k==='c'){if(lsel){e.preventDefault();copySel();}}
+    else if(k==='escape'){reset();}
+    else if(k==='enter'&&phase==='region'){recognize({x:0,y:0,w:lt.clientWidth,h:lt.clientHeight});cut.hidden=true;}
+  });
+  document.getElementById('lt-copy').addEventListener('click',copySel);
+  document.getElementById('lt-all').addEventListener('click',selectAll);
+  document.getElementById('lt-search').addEventListener('click',function(){toast('Would search the web for the selection');});
+  document.getElementById('lt-link').addEventListener('click',function(){toast('Would open it in your browser');});
+  document.getElementById('lt-whole').addEventListener('click',function(){reset();recognize({x:0,y:0,w:lt.clientWidth,h:lt.clientHeight});cut.hidden=true;});
+  document.getElementById('lt-reset').addEventListener('click',reset);
+  linesBox.addEventListener('change',function(){if(lsel)paint();});
+  window.addEventListener('resize',function(){if(phase==='select'&&region)reset();});
+  reset();
+
+  render();
+})();
+</script>
