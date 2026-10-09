@@ -115,6 +115,10 @@ pub fn recording_saved(d: &recorder::Done) {
     }
 }
 
+pub fn is_showing() -> bool {
+    with(|n| n.toast.is_some()).unwrap_or(false)
+}
+
 pub fn message(text: &str) {
     show(Kind::Message, text.to_string(), None, None);
 }

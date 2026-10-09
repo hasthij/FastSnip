@@ -174,6 +174,7 @@ pub fn begin() {
             return;
         }
         s.stage = Stage::Countdown;
+        crate::tray::set_recording(u.main, true);
         s.countdown_end = Some(Instant::now() + std::time::Duration::from_secs(s.countdown_secs as u64));
         s.frames = make_frames(&s.area, s.scale);
         let pill = make_pill(&s.area, s.scale);
@@ -202,6 +203,7 @@ pub fn stop() {
                 s.ctl.stop.store(true, Ordering::SeqCst);
                 let s = u.session.take().unwrap();
                 destroy(s);
+                crate::tray::set_recording(u.main, false);
                 return;
             }
             s.ctl.stop.store(true, Ordering::SeqCst);
@@ -217,6 +219,7 @@ pub fn on_done(d: recorder::Done) {
         if let Some(s) = u.session.take() {
             destroy(s);
         }
+        crate::tray::set_recording(u.main, false);
     });
     match (&d.path, &d.error) {
         (Some(p), None) => crate::overlay::log(&format!("recording saved: {} ({:.1} s)", p.display(), d.seconds)),

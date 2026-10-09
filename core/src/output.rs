@@ -22,6 +22,17 @@ use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_APP};
 
 pub const WM_PNG_READY: u32 = WM_APP + 2;
 
+static PENDING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Screenshots still being encoded or written.
+pub fn pending() -> usize {
+    PENDING.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+pub fn done_saving() {
+    let _ = PENDING.fetch_update(std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst, |v| v.checked_sub(1));
+}
+
 /// A finished capture: tightly packed BGRA. Alpha is 0 outside a freeform shape.
 pub struct Image {
     pub w: u32,
@@ -206,8 +217,12 @@ pub fn clipboard_set_text(owner: HWND, text: &str) -> bool {
 /// Encode and save on a worker thread, then notify `notify` with WM_PNG_READY.
 pub fn save_async(img: std::sync::Arc<Image>, dir: PathBuf, notify: HWND) {
     let target = notify.0 as isize;
+    PENDING.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     std::thread::spawn(move || {
-        let Some(png) = encode_png(&img) else { return };
+        let Some(png) = encode_png(&img) else {
+            done_saving();
+            return;
+        };
         let _ = std::fs::create_dir_all(&dir);
         let path = unique_path(&dir, &timestamp_name("Screenshot", "png"));
         let saved = std::fs::write(&path, &png).is_ok().then_some(path);
