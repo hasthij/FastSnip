@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="FastSnip.App.Pages.SetupPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:c="using:FastSnip.App.Controls">
+
+    <Grid Padding="40,12,40,28" RowSpacing="20" MaxWidth="820">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Spacing="14">
+            <TextBlock Text="Set up FastSnip" Style="{StaticResource TitleTextBlockStyle}" />
+            <StackPanel x:Name="Steps" Orientation="Horizontal" Spacing="10" />
+        </StackPanel>
+
+        <!-- 1. Background -->
+        <StackPanel x:Name="Step1" Grid.Row="1" Spacing="12">
+            <TextBlock Text="How should FastSnip wait for your shortcut?" Style="{StaticResource SubtitleTextBlockStyle}" />
+            <TextBlock TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="You can change this any time in Settings." />
+            <RadioButton x:Name="BgTray" GroupName="bg" IsChecked="True" Padding="12" HorizontalAlignment="Stretch" BorderThickness="1" CornerRadius="8"
+                         BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                <StackPanel Spacing="4">
+                    <TextBlock Text="Keep ready in the tray (recommended)" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                    <TextBlock TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               Text="Opens in about 15 ms. Gives its memory back to Windows while idle and uses no CPU." />
+                </StackPanel>
+            </RadioButton>
+            <RadioButton x:Name="BgDemand" GroupName="bg" Padding="12" HorizontalAlignment="Stretch" BorderThickness="1" CornerRadius="8"
+                         BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                <StackPanel Spacing="4">
+                    <TextBlock Text="Start only when needed" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                    <TextBlock TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               Text="No tray icon, only a ~1 MB shortcut listener. Each capture starts FastSnip first, so it opens in about 100-200 ms." />
+                </StackPanel>
+            </RadioButton>
+            <CheckBox x:Name="StartWithWindows" IsChecked="True" Content="Start FastSnip when I sign in" />
+        </StackPanel>
+
+        <!-- 2. Shortcuts -->
+        <StackPanel x:Name="Step2" Grid.Row="1" Spacing="12" Visibility="Collapsed">
+            <TextBlock Text="Shortcuts" Style="{StaticResource SubtitleTextBlockStyle}" />
+            <TextBlock TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="Print Screen and Win + Shift + S open the FastSnip toolbar instead of Windows' snipping tool. Click a shortcut to remove it, or Add to record a new one." />
+            <Border Style="{StaticResource CardBorder}" Padding="16,12">
+                <Grid RowSpacing="14" ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions><RowDefinition /><RowDefinition /><RowDefinition /></Grid.RowDefinitions>
+                    <TextBlock Text="Open toolbar" VerticalAlignment="Center" />
+                    <c:ShortcutList x:Name="ScOpen" Grid.Column="1" />
+                    <TextBlock Grid.Row="1" Text="Start or stop full screen recording" VerticalAlignment="Center" />
+                    <c:ShortcutList x:Name="ScRecord" Grid.Row="1" Grid.Column="1" />
+                    <TextBlock Grid.Row="2" Text="Grab text" VerticalAlignment="Center" />
+                    <c:ShortcutList x:Name="ScText" Grid.Row="2" Grid.Column="1" />
+                </Grid>
+            </Border>
+            <InfoBar x:Name="PrtScInfo" Severity="Informational" IsClosable="False" IsOpen="False"
+                     Message="Windows still opens its own tool on Print Screen. Turn off &quot;Use the Print screen key to open screen capture&quot; so FastSnip gets it.">
+                <InfoBar.ActionButton>
+                    <Button Content="Open Windows Settings" Click="OpenKeyboardSettings_Click" />
+                </InfoBar.ActionButton>
+            </InfoBar>
+        </StackPanel>
+
+        <!-- 3. OCR speed test -->
+        <StackPanel x:Name="Step3" Grid.Row="1" Spacing="12" Visibility="Collapsed">
+            <TextBlock Text="Finding the fastest text engine for this PC" Style="{StaticResource SubtitleTextBlockStyle}" />
+            <TextBlock x:Name="TestStatus" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="Reading 4 sample images, 5 times each after a warm-up." />
+            <ProgressBar x:Name="TestBar" Maximum="1" />
+            <Border Style="{StaticResource CardBorder}" Padding="16,8">
+                <StackPanel x:Name="Results" Spacing="6" />
+            </Border>
+            <TextBlock TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="The fastest engine wins unless it's more than 2 points less accurate. You can run this again or pick an engine in Settings." />
+        </StackPanel>
+
+        <!-- 4. Done -->
+        <StackPanel x:Name="Step4" Grid.Row="1" Spacing="12" Visibility="Collapsed">
+            <TextBlock Text="You're set" Style="{StaticResource SubtitleTextBlockStyle}" />
+            <TextBlock TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" x:Name="DoneText" />
+            <Border Style="{StaticResource CardBorder}" Padding="16,12">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="On the toolbar" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                    <TextBlock TextWrapping="Wrap" Text="S, R, T switch between Snip, Record and Text. 1–5 pick the shape. Enter takes the whole display, Esc cancels." />
+                    <TextBlock TextWrapping="Wrap" Text="Every screenshot is copied to the clipboard and saved to Pictures\Screenshots. Recordings are saved to Videos\Screen Recordings when you stop them." />
+                </StackPanel>
+            </Border>
+        </StackPanel>
+
+        <Grid Grid.Row="2">
+            <Button x:Name="Back" Content="Back" Click="Back_Click" Visibility="Collapsed" />
+            <Button x:Name="Next" Content="Continue" HorizontalAlignment="Right" Style="{StaticResource AccentButtonStyle}" Click="Next_Click" />
+        </Grid>
+    </Grid>
+</Page>

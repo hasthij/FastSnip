@@ -1,0 +1,252 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="FastSnip.App.Pages.SettingsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:c="using:FastSnip.App.Controls">
+
+    <Page.Resources>
+        <Style x:Key="Row" TargetType="Grid">
+            <Setter Property="Padding" Value="0,12" />
+            <Setter Property="ColumnSpacing" Value="16" />
+        </Style>
+        <Style x:Key="RowTitle" TargetType="TextBlock" BasedOn="{StaticResource BodyTextBlockStyle}">
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style x:Key="RowHint" TargetType="TextBlock" BasedOn="{StaticResource CaptionTextBlockStyle}">
+            <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+        <Style x:Key="Divider" TargetType="Rectangle">
+            <Setter Property="Height" Value="1" />
+            <Setter Property="Fill" Value="{ThemeResource DividerStrokeColorDefaultBrush}" />
+        </Style>
+    </Page.Resources>
+
+    <ScrollViewer x:Name="Scroller" Padding="28,8,28,32">
+        <StackPanel MaxWidth="860" HorizontalAlignment="Left">
+            <TextBlock Text="Settings" Style="{StaticResource TitleTextBlockStyle}" Margin="0,0,0,8" />
+
+            <!-- Background -->
+            <TextBlock Text="Background" Style="{StaticResource GroupHeader}" />
+            <Grid ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <RadioButton x:Name="BgTray" GroupName="bg" Checked="Bg_Checked" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                             Padding="12" BorderThickness="1" CornerRadius="8" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                             Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="Keep ready in the tray" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                        <Border HorizontalAlignment="Left" Padding="8,2" CornerRadius="4" Background="{ThemeResource SystemFillColorSuccessBackgroundBrush}">
+                            <TextBlock Text="opens in ~15 ms" FontFamily="{StaticResource MonoFont}" FontSize="12" Foreground="{ThemeResource SystemFillColorSuccessBrush}" />
+                        </Border>
+                        <TextBlock Style="{StaticResource RowHint}" Text="Stays loaded with a tray icon. When idle it gives its memory back to Windows (under 1 MB in use) and uses no CPU. Text is ready the moment you let go of the mouse." />
+                    </StackPanel>
+                </RadioButton>
+                <RadioButton x:Name="BgDemand" Grid.Column="1" GroupName="bg" Checked="Bg_Checked" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                             Padding="12" BorderThickness="1" CornerRadius="8" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                             Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="Start only when needed" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                        <Border HorizontalAlignment="Left" Padding="8,2" CornerRadius="4" Background="{ThemeResource SystemFillColorCautionBackgroundBrush}">
+                            <TextBlock Text="opens in ~100-200 ms" FontFamily="{StaticResource MonoFont}" FontSize="12" Foreground="{ThemeResource SystemFillColorCautionBrush}" />
+                        </Border>
+                        <TextBlock Style="{StaticResource RowHint}" Text="No tray icon. Only a tiny shortcut listener keeps running (about 1 MB). Each capture starts FastSnip first, so it's noticeably slower, and text takes about 150 ms longer." />
+                    </StackPanel>
+                </RadioButton>
+            </Grid>
+            <Grid Style="{StaticResource Row}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel><TextBlock Text="Start FastSnip when I sign in" Style="{StaticResource RowTitle}" /><TextBlock x:Name="StartupHint" Style="{StaticResource RowHint}" Text="So the shortcuts work right away." /></StackPanel>
+                <ToggleSwitch x:Name="StartupToggle" Grid.Column="1" OnContent="" OffContent="" Toggled="Startup_Toggled" />
+            </Grid>
+
+            <!-- Shortcuts -->
+            <TextBlock Text="Shortcuts" Style="{StaticResource GroupHeader}" />
+            <Border Style="{StaticResource CardBorder}">
+                <StackPanel>
+                    <Grid Style="{StaticResource Row}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel><TextBlock Text="Open toolbar" Style="{StaticResource RowTitle}" /><TextBlock Style="{StaticResource RowHint}" Text="Takes over from Windows' own snipping shortcuts" /></StackPanel>
+                        <c:ShortcutList x:Name="ScOpen" Grid.Column="1" />
+                    </Grid>
+                    <Rectangle Style="{StaticResource Divider}" />
+                    <Grid Style="{StaticResource Row}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel><TextBlock Text="Snip full screen" Style="{StaticResource RowTitle}" /><TextBlock Style="{StaticResource RowHint}" Text="Skips the toolbar" /></StackPanel>
+                        <c:ShortcutList x:Name="ScFull" Grid.Column="1" />
+                    </Grid>
+                    <Rectangle Style="{StaticResource Divider}" />
+                    <Grid Style="{StaticResource Row}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel><TextBlock Text="Start or stop full screen recording" Style="{StaticResource RowTitle}" /></StackPanel>
+                        <c:ShortcutList x:Name="ScRecord" Grid.Column="1" />
+                    </Grid>
+                    <Rectangle Style="{StaticResource Divider}" />
+                    <Grid Style="{StaticResource Row}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel><TextBlock Text="Grab text" Style="{StaticResource RowTitle}" /><TextBlock Style="{StaticResource RowHint}" Text="Opens the toolbar in Text" /></StackPanel>
+                        <c:ShortcutList x:Name="ScText" Grid.Column="1" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+            <InfoBar x:Name="PrtScInfo" Margin="0,8,0,0" Severity="Informational" IsClosable="False" IsOpen="False"
+                     Message="Windows still opens its own tool on Print Screen. Turn off &quot;Use the Print screen key to open screen capture&quot;.">
+                <InfoBar.ActionButton>
+                    <Button Content="Open Windows Settings" Click="OpenKeyboardSettings_Click" />
+                </InfoBar.ActionButton>
+            </InfoBar>
+
+            <!-- Recording -->
+            <TextBlock Text="Recording" Style="{StaticResource GroupHeader}" />
+            <Border Style="{StaticResource CardBorder}">
+                <StackPanel>
+                    <Grid Style="{StaticResource Row}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <TextBlock Text="Frame rate" Style="{StaticResource RowTitle}" />
+                        <ComboBox x:Name="Fps" Grid.Column="1" MinWidth="160" SelectionChanged="Rec_Changed">
+                            <ComboBoxItem Content="30 fps" Tag="30" /><ComboBoxItem Content="60 fps" Tag="60" /><ComboBoxItem Content="120 fps" Tag="120" />
+                        </ComboBox>
+                    </Grid>
+                    <Rectangle Style="{StaticResource Divider}" />
+                    <Grid Style="{StaticResource Row}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel><TextBlock Text="Quality" Style="{StaticResource RowTitle}" /><TextBlock x:Name="QualityHint" Style="{StaticResource RowHint}" /></StackPanel>
+                        <ComboBox x:Name="Quality" Grid.Column="1" MinWidth="160" SelectionChanged="Rec_Changed">
+                            <ComboBoxItem Content="Low" Tag="low" /><ComboBoxItem Content="Standard" Tag="standard" /><ComboBoxItem Content="High" Tag="high" />
+                        </ComboBox>
+                    </Grid>
+                    <Rectangle Style="{StaticResource Divider}" />
+                    <Grid Style="{StaticResource Row}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel><TextBlock Text="Format" Style="{StaticResource RowTitle}" /><TextBlock Style="{StaticResource RowHint}" Text="Uses your graphics card's encoder" /></StackPanel>
+                        <TextBlock Grid.Column="1" Text="MP4 · H.264 · AAC" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    </Grid>
+                    <Rectangle Style="{StaticResource Divider}" />
+                    <Grid Style="{StaticResource Row}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel><TextBlock Text="Record microphone" Style="{StaticResource RowTitle}" /><TextBlock Style="{StaticResource RowHint}" Text="Uses your default microphone. You can mute it from the recording pill." /></StackPanel>
+                        <ToggleSwitch x:Name="Mic" Grid.Column="1" OnContent="" OffContent="" Toggled="Rec_Toggled" />
+                    </Grid>
+                    <Rectangle Style="{StaticResource Divider}" />
+                    <Grid Style="{StaticResource Row}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <TextBlock Text="Record system audio" Style="{StaticResource RowTitle}" />
+                        <ToggleSwitch x:Name="SysAudio" Grid.Column="1" OnContent="" OffContent="" Toggled="Rec_Toggled" />
+                    </Grid>
+                    <Rectangle Style="{StaticResource Divider}" />
+                    <Grid Style="{StaticResource Row}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <TextBlock Text="Show cursor" Style="{StaticResource RowTitle}" />
+                        <ToggleSwitch x:Name="Cursor" Grid.Column="1" OnContent="" OffContent="" Toggled="Rec_Toggled" />
+                    </Grid>
+                    <Rectangle Style="{StaticResource Divider}" />
+                    <Grid Style="{StaticResource Row}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel><TextBlock Text="Countdown" Style="{StaticResource RowTitle}" /><TextBlock Style="{StaticResource RowHint}" Text="Also hides the encoder start-up, so the first second is never lost." /></StackPanel>
+                        <ComboBox x:Name="Countdown" Grid.Column="1" MinWidth="160" SelectionChanged="Rec_Changed">
+                            <ComboBoxItem Content="Off" Tag="0" /><ComboBoxItem Content="3 seconds" Tag="3" /><ComboBoxItem Content="5 seconds" Tag="5" />
+                        </ComboBox>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- Text -->
+            <TextBlock Text="Text recognition" Style="{StaticResource GroupHeader}" />
+            <Border Style="{StaticResource CardBorder}">
+                <StackPanel>
+                    <Grid Style="{StaticResource Row}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel><TextBlock Text="Engine" Style="{StaticResource RowTitle}" /><TextBlock x:Name="EngineHint" Style="{StaticResource RowHint}" /></StackPanel>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                            <ComboBox x:Name="Engine" MinWidth="200" SelectionChanged="Text_Changed">
+                                <ComboBoxItem Content="Automatic (fastest)" Tag="auto" />
+                                <ComboBoxItem Content="Windows AI Text Recognizer" Tag="text-recognizer" />
+                                <ComboBoxItem Content="Windows.Media.Ocr" Tag="media-ocr" />
+                            </ComboBox>
+                            <Button x:Name="RunTest" Click="RunTest_Click">
+                                <StackPanel Orientation="Horizontal" Spacing="8"><FontIcon Glyph="&#xE72C;" FontSize="14" /><TextBlock Text="Run test again" /></StackPanel>
+                            </Button>
+                        </StackPanel>
+                    </Grid>
+                    <ProgressBar x:Name="TestProgress" Visibility="Collapsed" Maximum="1" Margin="0,0,0,8" />
+                    <Rectangle Style="{StaticResource Divider}" />
+                    <Grid Style="{StaticResource Row}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel><TextBlock Text="Read text as soon as the screen freezes" Style="{StaticResource RowTitle}" /><TextBlock Style="{StaticResource RowHint}" Text="Text is ready before you finish selecting. Uses a little CPU on each capture." /></StackPanel>
+                        <ToggleSwitch x:Name="ReadOnFreeze" Grid.Column="1" OnContent="" OffContent="" Toggled="Text_Toggled" />
+                    </Grid>
+                    <Rectangle Style="{StaticResource Divider}" />
+                    <Grid Style="{StaticResource Row}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <TextBlock Text="Keep line breaks when copying" Style="{StaticResource RowTitle}" />
+                        <ToggleSwitch x:Name="KeepLines" Grid.Column="1" OnContent="" OffContent="" Toggled="Text_Toggled" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- Saving -->
+            <TextBlock Text="Saving" Style="{StaticResource GroupHeader}" />
+            <Border Style="{StaticResource CardBorder}">
+                <StackPanel>
+                    <Grid Style="{StaticResource Row}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel><TextBlock Text="Screenshots" Style="{StaticResource RowTitle}" /><TextBlock x:Name="ShotsDir" Style="{StaticResource RowHint}" FontFamily="{StaticResource MonoFont}" /><TextBlock Style="{StaticResource RowHint}" Text="Every screenshot is copied to the clipboard and saved here." /></StackPanel>
+                        <Button Grid.Column="1" Content="Change" Tag="screenshots_dir" Click="ChangeDir_Click" />
+                    </Grid>
+                    <Rectangle Style="{StaticResource Divider}" />
+                    <Grid Style="{StaticResource Row}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel><TextBlock Text="Recordings" Style="{StaticResource RowTitle}" /><TextBlock x:Name="RecsDir" Style="{StaticResource RowHint}" FontFamily="{StaticResource MonoFont}" /><TextBlock Style="{StaticResource RowHint}" Text="Recordings are saved here when you stop them." /></StackPanel>
+                        <Button Grid.Column="1" Content="Change" Tag="recordings_dir" Click="ChangeDir_Click" />
+                    </Grid>
+                    <Rectangle Style="{StaticResource Divider}" />
+                    <Grid Style="{StaticResource Row}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel><TextBlock Text="Show a toast after each capture" Style="{StaticResource RowTitle}" /><TextBlock Style="{StaticResource RowHint}" Text="Click it to edit. It never opens anything by itself." /></StackPanel>
+                        <ToggleSwitch x:Name="Toast" Grid.Column="1" OnContent="" OffContent="" Toggled="Saving_Toggled" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- Look -->
+            <TextBlock Text="Look" Style="{StaticResource GroupHeader}" />
+            <Border Style="{StaticResource CardBorder}">
+                <StackPanel>
+                    <Grid Style="{StaticResource Row}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <TextBlock Text="Theme" Style="{StaticResource RowTitle}" />
+                        <ComboBox x:Name="Theme" Grid.Column="1" MinWidth="160" SelectionChanged="Look_Changed">
+                            <ComboBoxItem Content="Follow Windows" Tag="system" /><ComboBoxItem Content="Light" Tag="light" /><ComboBoxItem Content="Dark" Tag="dark" />
+                        </ComboBox>
+                    </Grid>
+                    <Rectangle Style="{StaticResource Divider}" />
+                    <Grid Style="{StaticResource Row}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel><TextBlock Text="Accent color" Style="{StaticResource RowTitle}" /><TextBlock x:Name="AccentHint" Style="{StaticResource RowHint}" /></StackPanel>
+                        <StackPanel x:Name="AccentRow" Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" />
+                    </Grid>
+                    <Rectangle Style="{StaticResource Divider}" />
+                    <Grid Style="{StaticResource Row}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel><TextBlock Text="Popup animation" Style="{StaticResource RowTitle}" /><TextBlock Style="{StaticResource RowHint}" Text="The toolbar pops in and the screen dims in. The freeze itself is always instant. Windows' animation setting doesn't change this." /></StackPanel>
+                        <ToggleSwitch x:Name="Anim" Grid.Column="1" OnContent="" OffContent="" Toggled="Look_Toggled" />
+                    </Grid>
+                    <Grid Style="{StaticResource Row}" x:Name="AnimSpeedRow">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel><TextBlock Text="Animation speed" Style="{StaticResource RowTitle}" /><TextBlock x:Name="AnimSpeedHint" Style="{StaticResource RowHint}" /></StackPanel>
+                        <Slider x:Name="AnimSpeed" Grid.Column="1" Width="220" Minimum="0.5" Maximum="3" StepFrequency="0.25" TickFrequency="0.5" TickPlacement="Outside" ValueChanged="AnimSpeed_ValueChanged" />
+                    </Grid>
+                    <Rectangle Style="{StaticResource Divider}" />
+                    <Grid Style="{StaticResource Row}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <TextBlock Text="Show magnifier while selecting" Style="{StaticResource RowTitle}" />
+                        <ToggleSwitch x:Name="Magnifier" Grid.Column="1" OnContent="" OffContent="" Toggled="Look_Toggled" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

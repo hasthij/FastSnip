@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="FastSnip.App.Pages.EditorPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:canvas="using:Microsoft.Graphics.Canvas.UI.Xaml"
+    KeyboardAcceleratorPlacementMode="Hidden">
+
+    <Page.Resources>
+        <Style x:Key="ToolButton" TargetType="ToggleButton" BasedOn="{StaticResource DefaultToggleButtonStyle}">
+            <Setter Property="Width" Value="40" />
+            <Setter Property="Height" Value="40" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+        </Style>
+    </Page.Resources>
+
+    <Grid>
+        <!-- Nothing open -->
+        <StackPanel x:Name="EmptyState" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="10" MaxWidth="380">
+            <FontIcon Glyph="&#xE70F;" FontSize="40" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+            <TextBlock Text="Pick a capture to edit" Style="{StaticResource SubtitleTextBlockStyle}" HorizontalAlignment="Center" />
+            <TextBlock TextWrapping="Wrap" TextAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="Open one from Captures, or click the thumbnail in the toast that appears after a snip." />
+            <Button Content="Go to Captures" HorizontalAlignment="Center" Click="GoCaptures_Click" />
+        </StackPanel>
+
+        <!-- Image editor -->
+        <Grid x:Name="ImageEditor" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="56" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="220" />
+            </Grid.ColumnDefinitions>
+
+            <Grid Grid.ColumnSpan="3" Padding="16,4,16,10" ColumnSpacing="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock x:Name="FileName" Style="{StaticResource BodyStrongTextBlockStyle}" TextTrimming="CharacterEllipsis" />
+                    <TextBlock x:Name="FileInfoText" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                    <Button Click="Copy_Click" ToolTipService.ToolTip="Copy (Ctrl+C)">
+                        <StackPanel Orientation="Horizontal" Spacing="8"><FontIcon Glyph="&#xE8C8;" FontSize="14" /><TextBlock Text="Copy" /></StackPanel>
+                    </Button>
+                    <Button Click="SaveCopy_Click" ToolTipService.ToolTip="Save a copy (Ctrl+Shift+S)" Content="Save copy" />
+                    <Button Style="{StaticResource AccentButtonStyle}" Click="Save_Click" ToolTipService.ToolTip="Save over the original (Ctrl+S)">
+                        <StackPanel Orientation="Horizontal" Spacing="8"><FontIcon Glyph="&#xE74E;" FontSize="14" /><TextBlock Text="Save" /></StackPanel>
+                    </Button>
+                </StackPanel>
+            </Grid>
+
+            <!-- Tools -->
+            <StackPanel x:Name="Rail" Grid.Row="1" Spacing="2" Padding="8,4" BorderThickness="0,1,1,0"
+                        BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}">
+                <ToggleButton x:Name="ToolCrop" Style="{StaticResource ToolButton}" Tag="crop" Click="Tool_Click" ToolTipService.ToolTip="Crop (C)"><FontIcon Glyph="&#xE7A8;" FontSize="16" /></ToggleButton>
+                <ToggleButton x:Name="ToolPen" Style="{StaticResource ToolButton}" Tag="pen" Click="Tool_Click" ToolTipService.ToolTip="Pen (P)"><FontIcon Glyph="&#xE70F;" FontSize="16" /></ToggleButton>
+                <ToggleButton x:Name="ToolHighlighter" Style="{StaticResource ToolButton}" Tag="highlighter" Click="Tool_Click" ToolTipService.ToolTip="Highlighter (H)"><FontIcon Glyph="&#xE7E6;" FontSize="16" /></ToggleButton>
+                <ToggleButton x:Name="ToolArrow" Style="{StaticResource ToolButton}" Tag="arrow" Click="Tool_Click" ToolTipService.ToolTip="Arrow (A)" IsChecked="True">
+                    <FontIcon Glyph="&#xE72A;" FontSize="16" RenderTransformOrigin="0.5,0.5"><FontIcon.RenderTransform><RotateTransform Angle="-45" /></FontIcon.RenderTransform></FontIcon>
+                </ToggleButton>
+                <ToggleButton x:Name="ToolBox" Style="{StaticResource ToolButton}" Tag="box" Click="Tool_Click" ToolTipService.ToolTip="Box (B)"><FontIcon Glyph="&#xE739;" FontSize="16" /></ToggleButton>
+                <ToggleButton x:Name="ToolText" Style="{StaticResource ToolButton}" Tag="text" Click="Tool_Click" ToolTipService.ToolTip="Text (T)"><FontIcon Glyph="&#xE8D2;" FontSize="16" /></ToggleButton>
+                <ToggleButton x:Name="ToolBlur" Style="{StaticResource ToolButton}" Tag="blur" Click="Tool_Click" ToolTipService.ToolTip="Blur (X)"><FontIcon Glyph="&#xE80A;" FontSize="16" /></ToggleButton>
+                <ToggleButton x:Name="ToolStep" Style="{StaticResource ToolButton}" Tag="step" Click="Tool_Click" ToolTipService.ToolTip="Step numbers (N)">
+                    <Border Width="20" Height="20" CornerRadius="10" BorderThickness="1.5" BorderBrush="{ThemeResource TextFillColorPrimaryBrush}">
+                        <TextBlock Text="1" FontSize="11" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                </ToggleButton>
+                <Rectangle Height="1" Margin="6,6" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                <Button Width="40" Height="40" Padding="0" Background="Transparent" BorderThickness="0" Click="Undo_Click" ToolTipService.ToolTip="Undo (Ctrl+Z)"><FontIcon Glyph="&#xE7A7;" FontSize="16" /></Button>
+                <Button Width="40" Height="40" Padding="0" Background="Transparent" BorderThickness="0" Click="Redo_Click" ToolTipService.ToolTip="Redo (Ctrl+Y)"><FontIcon Glyph="&#xE7A6;" FontSize="16" /></Button>
+            </StackPanel>
+
+            <!-- Canvas -->
+            <Grid x:Name="CanvasHost" Grid.Row="1" Grid.Column="1" Background="{ThemeResource LayerFillColorDefaultBrush}"
+                  BorderThickness="0,1,0,0" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}">
+                <canvas:CanvasControl x:Name="Canvas" UseSharedDevice="True" Draw="Canvas_Draw" CreateResources="Canvas_CreateResources"
+                                      PointerPressed="Canvas_PointerPressed" PointerMoved="Canvas_PointerMoved"
+                                      PointerReleased="Canvas_PointerReleased" SizeChanged="Canvas_SizeChanged"
+                                      ClearColor="Transparent" />
+                <Canvas x:Name="TextLayer" IsHitTestVisible="True">
+                    <TextBox x:Name="TextEntry" Visibility="Collapsed" MinWidth="120" PlaceholderText="Type, then Enter"
+                             KeyDown="TextEntry_KeyDown" LostFocus="TextEntry_LostFocus" />
+                </Canvas>
+                <Border Padding="10,4" Margin="12" CornerRadius="6" HorizontalAlignment="Left" VerticalAlignment="Bottom"
+                        Background="{ThemeResource AcrylicInAppFillColorDefaultBrush}">
+                    <TextBlock x:Name="Hint" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                </Border>
+                <Button x:Name="ApplyCrop" Visibility="Collapsed" Style="{StaticResource AccentButtonStyle}" Margin="12"
+                        HorizontalAlignment="Right" VerticalAlignment="Bottom" Content="Apply crop" Click="ApplyCrop_Click" />
+            </Grid>
+
+            <!-- Options for the current tool -->
+            <StackPanel Grid.Row="1" Grid.Column="2" Padding="16,12" Spacing="18" BorderThickness="1,1,0,0"
+                        BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="Color" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <VariableSizedWrapGrid x:Name="Swatches" Orientation="Horizontal" MaximumRowsOrColumns="7" ItemWidth="26" ItemHeight="26" />
+                </StackPanel>
+                <StackPanel Spacing="4">
+                    <TextBlock x:Name="WidthLabel" Text="Thickness · 4 px" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <Slider x:Name="WidthSlider" Minimum="1" Maximum="24" Value="4" StepFrequency="1" ValueChanged="WidthSlider_ValueChanged" />
+                </StackPanel>
+                <StackPanel Spacing="4">
+                    <TextBlock x:Name="FontLabel" Text="Text size · 22 px" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <Slider x:Name="FontSlider" Minimum="10" Maximum="72" Value="22" StepFrequency="1" ValueChanged="FontSlider_ValueChanged" />
+                </StackPanel>
+                <TextBlock x:Name="SavedText" TextWrapping="Wrap" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            </StackPanel>
+        </Grid>
+
+        <!-- Video trim -->
+        <Grid x:Name="VideoEditor" Visibility="Collapsed" Padding="24,4,24,20" RowSpacing="12">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <StackPanel>
+                <TextBlock x:Name="VideoName" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                <TextBlock x:Name="VideoInfo" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            </StackPanel>
+            <MediaPlayerElement x:Name="Player" Grid.Row="1" AreTransportControlsEnabled="True" Stretch="Uniform" />
+            <Border Grid.Row="2" Style="{StaticResource CardBorder}" Padding="16,12">
+                <Grid RowSpacing="8" ColumnSpacing="12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Start" VerticalAlignment="Center" />
+                    <Slider x:Name="TrimStart" Grid.Column="1" StepFrequency="0.1" ValueChanged="Trim_ValueChanged" />
+                    <TextBlock Grid.Row="1" Text="End" VerticalAlignment="Center" />
+                    <Slider x:Name="TrimEnd" Grid.Row="1" Grid.Column="1" StepFrequency="0.1" ValueChanged="Trim_ValueChanged" />
+                    <Grid Grid.Row="2" Grid.ColumnSpan="2" ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="TrimInfo" VerticalAlignment="Center" FontFamily="{StaticResource MonoFont}" FontSize="12" />
+                        <ToggleSwitch x:Name="SnapKeyframes" Grid.Column="1" IsOn="True" OnContent="Snap to keyframes (instant)" OffContent="Exact frame (re-encodes)" />
+                        <Button x:Name="SaveTrim" Grid.Column="2" Style="{StaticResource AccentButtonStyle}" Click="SaveTrim_Click">
+                            <StackPanel Orientation="Horizontal" Spacing="8"><FontIcon Glyph="&#xE8C6;" FontSize="14" /><TextBlock Text="Save trimmed" /></StackPanel>
+                        </Button>
+                    </Grid>
+                    <ProgressBar x:Name="TrimProgress" Grid.Row="3" Grid.ColumnSpan="2" Visibility="Collapsed" Maximum="100" />
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</Page>

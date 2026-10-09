@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="FastSnip.App.Pages.CapturesPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:s="using:FastSnip.App.Services">
+
+    <Page.Resources>
+        <CollectionViewSource x:Name="Groups" IsSourceGrouped="True" />
+    </Page.Resources>
+
+    <Grid Padding="28,8,28,0" RowSpacing="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="Captures" Style="{StaticResource TitleTextBlockStyle}" VerticalAlignment="Center" />
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                <Button Click="Record_Click" ToolTipService.ToolTip="Record screen">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE714;" FontSize="14" />
+                        <TextBlock Text="Record" />
+                    </StackPanel>
+                </Button>
+                <Button Style="{StaticResource AccentButtonStyle}" Click="NewSnip_Click">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xF406;" FontSize="14" />
+                        <TextBlock Text="New snip" />
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+        </Grid>
+
+        <Grid Grid.Row="1" ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <SelectorBar x:Name="Filter" SelectionChanged="Filter_SelectionChanged">
+                <SelectorBarItem x:Name="FilterAll" Text="All" IsSelected="True" />
+                <SelectorBarItem x:Name="FilterImages" Text="Images" />
+                <SelectorBarItem x:Name="FilterVideos" Text="Videos" />
+            </SelectorBar>
+            <AutoSuggestBox x:Name="Search" Grid.Column="1" MaxWidth="320" HorizontalAlignment="Right"
+                            PlaceholderText="Search text in screenshots" QueryIcon="Find"
+                            TextChanged="Search_TextChanged" />
+        </Grid>
+
+        <Grid Grid.Row="2">
+            <GridView x:Name="Grid" ItemsSource="{x:Bind Groups.View, Mode=OneWay}" SelectionMode="Single"
+                      IsItemClickEnabled="True" ItemClick="Grid_ItemClick" Padding="0,0,0,24"
+                      RightTapped="Grid_RightTapped">
+                <GridView.GroupStyle>
+                    <GroupStyle>
+                        <GroupStyle.HeaderTemplate>
+                            <DataTemplate x:DataType="s:DayGroup">
+                                <TextBlock Text="{x:Bind Title}" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                            </DataTemplate>
+                        </GroupStyle.HeaderTemplate>
+                    </GroupStyle>
+                </GridView.GroupStyle>
+                <GridView.ItemTemplate>
+                    <DataTemplate x:DataType="s:CaptureItem">
+                        <Grid Width="200" Height="156" CornerRadius="8" BorderThickness="1"
+                              BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                              Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="32" />
+                            </Grid.RowDefinitions>
+                            <Grid Background="{ThemeResource SubtleFillColorSecondaryBrush}">
+                                <Image Source="{x:Bind Thumb, Mode=OneWay}" Stretch="UniformToFill" />
+                                <Border Margin="6" Padding="6,1" CornerRadius="4" HorizontalAlignment="Left" VerticalAlignment="Top"
+                                        Background="{ThemeResource AcrylicInAppFillColorDefaultBrush}">
+                                    <TextBlock Text="{x:Bind Kind}" FontFamily="{StaticResource MonoFont}" FontSize="11" />
+                                </Border>
+                            </Grid>
+                            <Grid Grid.Row="1" Padding="10,0">
+                                <TextBlock Text="{x:Bind Time}" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="12" />
+                                <TextBlock Text="{x:Bind Badge, Mode=OneWay}" VerticalAlignment="Center" HorizontalAlignment="Right"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="12" />
+                            </Grid>
+                        </Grid>
+                    </DataTemplate>
+                </GridView.ItemTemplate>
+            </GridView>
+
+            <StackPanel x:Name="Empty" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8" MaxWidth="360">
+                <FontIcon Glyph="&#xF406;" FontSize="40" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                <TextBlock Text="Take your first snip" Style="{StaticResource SubtitleTextBlockStyle}" HorizontalAlignment="Center" />
+                <TextBlock x:Name="EmptyHint" TextWrapping="Wrap" TextAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           Text="Press Print Screen or Win + Shift + S. Screenshots and recordings show up here." />
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Page>

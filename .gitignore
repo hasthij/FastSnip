@@ -1,2 +1,4 @@
 core/target/
 *.old.*.exe
+app/**/bin/
+app/**/obj/

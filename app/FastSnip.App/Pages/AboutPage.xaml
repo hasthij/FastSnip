@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="FastSnip.App.Pages.AboutPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <StackPanel Padding="28,8,28,28" Spacing="12" MaxWidth="720" HorizontalAlignment="Left">
+        <TextBlock Text="About" Style="{StaticResource TitleTextBlockStyle}" />
+        <StackPanel Orientation="Horizontal" Spacing="14">
+            <Image Source="ms-appx:///Assets/AppIcon256.png" Width="56" Height="56" />
+            <StackPanel VerticalAlignment="Center">
+                <TextBlock Text="FastSnip" Style="{StaticResource SubtitleTextBlockStyle}" />
+                <TextBlock x:Name="Version" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            </StackPanel>
+        </StackPanel>
+        <TextBlock TextWrapping="Wrap" Text="Screenshots, recordings and text from your screen, opened in a single frame. Free and open source under the GNU GPL v3." />
+        <TextBlock TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                   Text="Icons: Lucide (ISC license). Text recognition: Windows.Media.Ocr and Windows AI Text Recognizer. Drawing: Win2D." />
+        <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Content="Open settings folder" Click="OpenConfig_Click" />
+            <Button Content="Run setup again" Click="Setup_Click" />
+        </StackPanel>
+    </StackPanel>
+</Page>
