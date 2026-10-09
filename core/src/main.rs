@@ -22,6 +22,8 @@ mod dup;
 mod element;
 mod gfx;
 mod hotkey;
+mod livetext;
+mod ocr;
 mod output;
 mod overlay;
 mod theme;
@@ -121,6 +123,11 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             }
             LRESULT(0)
         }
+        ocr::WM_OCR => {
+            let done = Box::from_raw(lp.0 as *mut ocr::Done);
+            overlay::with(|o| o.on_ocr(*done));
+            LRESULT(0)
+        }
         element::WM_ELEMENT => {
             let found = Box::from_raw(lp.0 as *mut element::Found);
             overlay::with(|o| o.on_element(*found));
@@ -154,6 +161,19 @@ fn main() {
                 t.elapsed().as_secs_f64() * 1000.0,
                 f.map(|f| f.bounds)
             );
+        }
+        return;
+    }
+    if std::env::args().nth(1).as_deref() == Some("--bench-ocr") {
+        let f = capture::grab().expect("grab");
+        let r = f.bounds;
+        for up in [false, true] {
+            let crop = capture::Rect { x: r.x, y: r.y, w: r.w.min(1280), h: r.h.min(720) };
+            let (cr, bgra) = f.crop(if up { &crop } else { &r }).unwrap();
+            let job = ocr::Job { seq: 0, kind: ocr::Kind::Monitor, origin: (cr.x, cr.y), w: cr.w as u32, h: cr.h as u32, bgra, upscale: up };
+            let t = std::time::Instant::now();
+            let words = ocr::read_now(&job);
+            eprintln!("ocr {}x{} upscale={up}: {} words in {:.0} ms", cr.w, cr.h, words.len(), t.elapsed().as_secs_f64() * 1000.0);
         }
         return;
     }

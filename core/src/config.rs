@@ -42,6 +42,8 @@ pub struct Look {
     pub magnifier: bool,
     /// Toolbar pop-in and dim fade. Our own setting: Windows' "Animation effects" doesn't affect it.
     pub animations: bool,
+    /// 0.5 to 3.0. Higher is faster: durations are divided by this.
+    pub animation_speed: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,6 +101,7 @@ impl Default for Look {
             theme: "system".into(),
             magnifier: true,
             animations: true,
+            animation_speed: 1.0,
         }
     }
 }

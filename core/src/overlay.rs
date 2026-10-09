@@ -24,6 +24,8 @@ use crate::dup::Dup;
 use crate::element::{self, Finder};
 use crate::gfx::{rf, Gfx, Surface};
 use crate::hotkey::Action;
+use crate::livetext::{search_url, BarBtn, LiveText};
+use crate::ocr::{self, Reader, Word};
 use crate::output::{self, Image};
 use crate::theme::{self, with_alpha, Palette};
 
@@ -118,12 +120,22 @@ pub struct Overlay {
     palette: Palette,
     magnifier: bool,
     animations: bool,
+    anim_speed: f32,
     anim_t0: Option<Instant>,
     shots_dir: PathBuf,
     dash: Option<ID2D1StrokeStyle>,
     notice: Option<String>,
     main: HWND,
     opened_at: Option<Instant>,
+    text: Option<LiveText>,
+    reader: Reader,
+    ocr_words: Vec<Word>,
+    ocr_pending: usize,
+    ocr_seq: u64,
+    keep_lines: bool,
+    read_on_freeze: bool,
+    text_bar: Vec<(BarBtn, Rect)>,
+    text_pressed: Option<BarBtn>,
 }
 
 thread_local! {
@@ -216,12 +228,22 @@ impl Overlay {
             palette: theme::palette(&cfg.look.accent, &cfg.look.theme),
             magnifier: cfg.look.magnifier,
             animations: cfg.look.animations,
+            anim_speed: cfg.look.animation_speed.clamp(0.5, 3.0),
             anim_t0: None,
             shots_dir: output::screenshots_dir(&cfg.saving.screenshots_dir),
             dash,
             notice: None,
             main,
             opened_at: None,
+            text: None,
+            reader: Reader::start(main),
+            ocr_words: Vec::new(),
+            ocr_pending: 0,
+            ocr_seq: 0,
+            keep_lines: cfg.text.keep_line_breaks,
+            read_on_freeze: cfg.text.read_on_freeze,
+            text_bar: Vec::new(),
+            text_pressed: None,
         };
         // Pre-create the windows and swap chains, and draw once so fonts and
         // icons are cached: the first open is as fast as every later one.
@@ -238,6 +260,9 @@ impl Overlay {
         self.palette = theme::palette(&cfg.look.accent, &cfg.look.theme);
         self.magnifier = cfg.look.magnifier;
         self.animations = cfg.look.animations;
+        self.anim_speed = cfg.look.animation_speed.clamp(0.5, 3.0);
+        self.keep_lines = cfg.text.keep_line_breaks;
+        self.read_on_freeze = cfg.text.read_on_freeze;
         self.shots_dir = output::screenshots_dir(&cfg.saving.screenshots_dir);
     }
 
@@ -425,6 +450,9 @@ impl Overlay {
             }
         }
         let t_read = t0.elapsed();
+        self.text = None;
+        self.text_bar.clear();
+        self.start_ocr();
         let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
         log(&format!(
             "overlay visible in {:.1} ms (grab {:.1} {}, windows {:.1}, setup {:.1}, render {:.1}, show {:.1}, focus {:.1}); pixels ready at {:.1} ms",
@@ -464,6 +492,9 @@ impl Overlay {
         self.frame = None;
         self.snapshot.clear();
         self.drag = None;
+        self.text = None;
+        self.text_bar.clear();
+        self.text_pressed = None;
     }
 
     // ---------------------------------------------------------------- messages
@@ -478,19 +509,30 @@ impl Overlay {
                 self.on_move(g);
                 Some(LRESULT(0))
             }
-            WM_LBUTTONDOWN => {
+            WM_LBUTTONDOWN | WM_LBUTTONDBLCLK => {
                 let g = to_global(self, lparam_xy(lp));
                 self.mouse = g;
                 if let Some(b) = self.btn_at(g) {
                     self.pressed = Some(b);
-                } else if matches!(self.shape, Shape::Rect | Shape::Free) {
-                    self.drag = Some(Drag {
-                        start: g,
-                        pts: vec![g],
-                        mon: self.mon_at(g.0, g.1),
-                    });
+                } else if let Some(tb) = self.text_btn_at(g) {
+                    self.text_pressed = Some(tb);
+                } else if self.text.as_mut().map(|t| t.press(g)) == Some(true) {
                     unsafe {
                         SetCapture(hwnd);
+                    }
+                } else {
+                    // Outside the text area: start over with a new selection.
+                    self.text = None;
+                    self.text_bar.clear();
+                    if matches!(self.shape, Shape::Rect | Shape::Free) {
+                        self.drag = Some(Drag {
+                            start: g,
+                            pts: vec![g],
+                            mon: self.mon_at(g.0, g.1),
+                        });
+                        unsafe {
+                            SetCapture(hwnd);
+                        }
                     }
                 }
                 self.render_all();
@@ -510,10 +552,23 @@ impl Overlay {
                 Some(LRESULT(0))
             }
             WM_SETCURSOR => {
-                let over_bar = self.btn_at(self.mouse).is_some() || self.in_toolbar(self.mouse);
+                let over_bar = self.btn_at(self.mouse).is_some()
+                    || self.in_toolbar(self.mouse)
+                    || self.text_btn_at(self.mouse).is_some();
+                let in_text = self
+                    .text
+                    .as_ref()
+                    .map(|t| t.region.contains(self.mouse.0, self.mouse.1))
+                    .unwrap_or(false);
+                let cur = if over_bar {
+                    IDC_ARROW
+                } else if in_text {
+                    IDC_IBEAM
+                } else {
+                    IDC_CROSS
+                };
                 unsafe {
-                    let c = LoadCursorW(None, if over_bar { IDC_ARROW } else { IDC_CROSS })
-                        .unwrap_or_default();
+                    let c = LoadCursorW(None, cur).unwrap_or_default();
                     SetCursor(Some(c));
                 }
                 Some(LRESULT(1))
@@ -576,6 +631,13 @@ impl Overlay {
             return;
         }
         self.mouse = g;
+        if let Some(t) = &mut self.text {
+            if t.selecting {
+                t.drag(g);
+                self.render_all();
+                return;
+            }
+        }
         if let Some(d) = &mut self.drag {
             let last = *d.pts.last().unwrap();
             if (last.0 - g.0).abs() + (last.1 - g.1).abs() >= 2 {
@@ -600,6 +662,25 @@ impl Overlay {
 
     fn on_up(&mut self, g: (i32, i32)) {
         self.mouse = g;
+        if let Some(b) = self.text_pressed.take() {
+            if self.text_btn_at(g).as_ref() == Some(&b) {
+                self.text_action(b);
+            }
+            if self.visible {
+                self.render_all();
+            }
+            return;
+        }
+        if let Some(t) = &mut self.text {
+            if t.selecting {
+                t.release();
+                unsafe {
+                    let _ = ReleaseCapture();
+                }
+                self.render_all();
+                return;
+            }
+        }
         if let Some(b) = self.pressed.take() {
             if self.btn_at(g) == Some(b) {
                 self.activate(b);
@@ -683,11 +764,22 @@ impl Overlay {
     fn on_key(&mut self, vk: u32) {
         let ctrl = unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0;
         let shift = unsafe { GetKeyState(VK_SHIFT.0 as i32) } < 0;
+        if ctrl {
+            if let Some(t) = &mut self.text {
+                if vk == b'A' as u32 {
+                    t.select_all();
+                } else if vk == b'C' as u32 {
+                    self.copy_text();
+                }
+                self.render_all();
+            }
+            return;
+        }
         match vk {
             v if v == VK_ESCAPE.0 as u32 => return self.close(),
-            v if v == b'S' as u32 && !ctrl => self.intent = Intent::Snip,
-            v if v == b'R' as u32 => self.intent = Intent::Record,
-            v if v == b'T' as u32 => self.intent = Intent::Text,
+            v if v == b'S' as u32 => self.set_intent(Intent::Snip),
+            v if v == b'R' as u32 => self.set_intent(Intent::Record),
+            v if v == b'T' as u32 => self.set_intent(Intent::Text),
             v if (b'1' as u32..=b'5' as u32).contains(&v) => {
                 self.set_shape(SHAPES[(v - b'1' as u32) as usize].0)
             }
@@ -752,6 +844,14 @@ impl Overlay {
         }
     }
 
+    fn set_intent(&mut self, i: Intent) {
+        if i != Intent::Text {
+            self.text = None;
+            self.text_bar.clear();
+        }
+        self.intent = i;
+    }
+
     fn set_shape(&mut self, s: Shape) {
         self.shape = s;
         self.element = None;
@@ -763,7 +863,7 @@ impl Overlay {
 
     fn activate(&mut self, b: Btn) {
         match b {
-            Btn::Intent(i) => self.intent = i,
+            Btn::Intent(i) => self.set_intent(i),
             Btn::Shape(s) => self.set_shape(s),
             Btn::Mic => self.mic = !self.mic,
             Btn::Audio => self.audio = !self.audio,
@@ -788,10 +888,260 @@ impl Overlay {
                 self.render_all();
             }
             Intent::Text => {
-                self.notice = Some("Text mode arrives in the next build".into());
+                let r = match t {
+                    Target::Area(r) => r,
+                    Target::Shape(pts) => {
+                        let (minx, maxx) = pts.iter().fold((i32::MAX, i32::MIN), |a, p| (a.0.min(p.0), a.1.max(p.0)));
+                        let (miny, maxy) = pts.iter().fold((i32::MAX, i32::MIN), |a, p| (a.0.min(p.1), a.1.max(p.1)));
+                        Rect { x: minx, y: miny, w: maxx - minx, h: maxy - miny }
+                    }
+                };
+                self.start_text(r);
                 self.render_all();
             }
         }
+    }
+
+    // ---------------------------------------------------------------- text mode
+
+    /// Read every monitor in the background as soon as the screen freezes.
+    fn start_ocr(&mut self) {
+        self.ocr_seq += 1;
+        self.ocr_words.clear();
+        self.ocr_pending = 0;
+        if !(self.read_on_freeze || self.intent == Intent::Text) {
+            return;
+        }
+        let Some(frame) = &self.frame else { return };
+        let mut order: Vec<usize> = (0..self.wins.len()).collect();
+        order.sort_by_key(|&i| i != self.tb_mon);
+        for i in order {
+            let r = self.wins[i].mon.rect;
+            if let Some((r, bgra)) = frame.crop(&r) {
+                self.reader.read(ocr::Job {
+                    seq: self.ocr_seq,
+                    kind: ocr::Kind::Monitor,
+                    origin: (r.x, r.y),
+                    w: r.w as u32,
+                    h: r.h as u32,
+                    bgra,
+                    upscale: false,
+                });
+                self.ocr_pending += 1;
+            }
+        }
+    }
+
+    fn start_text(&mut self, r: Rect) {
+        let words = ocr::words_in(&self.ocr_words, &r);
+        let mut queued = false;
+        // Re-read small areas at 2x: much better on tiny UI text, still fast.
+        let small = (r.w as i64 * r.h as i64) <= 600_000;
+        if small || self.ocr_pending == 0 && self.ocr_words.is_empty() {
+            if let Some((cr, bgra)) = self.frame.as_ref().and_then(|f| f.crop(&r)) {
+                self.reader.read(ocr::Job {
+                    seq: self.ocr_seq,
+                    kind: ocr::Kind::Region,
+                    origin: (cr.x, cr.y),
+                    w: cr.w as u32,
+                    h: cr.h as u32,
+                    bgra,
+                    upscale: small,
+                });
+                queued = true;
+            }
+        }
+        let reading = words.is_empty() && (queued || self.ocr_pending > 0);
+        self.text = Some(LiveText::new(r, words, reading));
+        self.text_bar.clear();
+    }
+
+    pub fn on_ocr(&mut self, d: ocr::Done) {
+        if d.seq != self.ocr_seq || !self.visible {
+            return;
+        }
+        log(&format!("ocr {:?}: {} words in {:.0} ms", d.kind, d.words.len(), d.ms));
+        match d.kind {
+            ocr::Kind::Monitor => {
+                self.ocr_pending = self.ocr_pending.saturating_sub(1);
+                let base = self.ocr_words.iter().map(|w| w.line + 1).max().unwrap_or(0);
+                self.ocr_words.extend(d.words.into_iter().map(|mut w| {
+                    w.line += base;
+                    w
+                }));
+                let pending = self.ocr_pending;
+                if let Some(t) = &mut self.text {
+                    if !t.refined && t.sel.is_none() {
+                        let words = ocr::words_in(&self.ocr_words, &t.region);
+                        if !words.is_empty() {
+                            t.set_words(words);
+                        }
+                    }
+                    t.reading = t.words.is_empty() && (pending > 0 || !t.refined);
+                }
+            }
+            ocr::Kind::Region => {
+                if let Some(t) = &mut self.text {
+                    if t.region == d.area || (t.region.w == d.area.w && t.region.h == d.area.h) {
+                        let mut words = ocr::words_in(&d.words, &t.region);
+                        ocr::sort_reading(&mut words);
+                        if t.sel.is_none() || t.words.is_empty() {
+                            t.set_words(words);
+                        }
+                        t.refined = true;
+                        t.reading = false;
+                    }
+                }
+            }
+        }
+        self.render_all();
+    }
+
+    fn text_btn_at(&self, g: (i32, i32)) -> Option<BarBtn> {
+        self.text_bar.iter().find(|(_, r)| r.contains(g.0, g.1)).map(|(b, _)| b.clone())
+    }
+
+    fn copy_text(&mut self) {
+        let Some(t) = &self.text else { return };
+        let text = t.text(self.keep_lines);
+        if text.is_empty() {
+            return;
+        }
+        let n = t.selected().len();
+        output::clipboard_set_text(self.main, &text);
+        self.notice = Some(format!("Copied {n} {} · Esc to close", if n == 1 { "word" } else { "words" }));
+    }
+
+    fn text_action(&mut self, b: BarBtn) {
+        match b {
+            BarBtn::Copy => self.copy_text(),
+            BarBtn::All => {
+                if let Some(t) = &mut self.text {
+                    t.select_all();
+                }
+            }
+            BarBtn::Link(url) => {
+                self.close();
+                shell_open(&url);
+            }
+            BarBtn::Search => {
+                let q = self.text.as_ref().map(|t| t.text(false)).unwrap_or_default();
+                if !q.is_empty() {
+                    self.close();
+                    shell_open(&search_url(&q));
+                }
+            }
+        }
+    }
+
+    fn draw_live_text(&mut self, idx: usize) {
+        let p = self.palette;
+        let mon = self.wins[idx].mon.clone();
+        let (mw, mh) = (mon.rect.w as f32, mon.rect.h as f32);
+        let s = mon.scale();
+        let Some(t) = &self.text else { return };
+        let region = t.region;
+        let loc = |r: &Rect| rf((r.x - mon.rect.x) as f32, (r.y - mon.rect.y) as f32, r.w as f32, r.h as f32);
+        match region.intersect(&mon.rect) {
+            Some(ri) => {
+                let lr = loc(&ri);
+                self.dim_outside(lr, mw, mh);
+                self.gfx.stroke(lr, theme::rgb(0xffffff), 1.5 * s, None);
+            }
+            None => self.gfx.fill(rf(0.0, 0.0, mw, mh), p.dim),
+        }
+        let sel = t.sel;
+        for (i, w) in t.words.iter().enumerate() {
+            if !mon.rect.contains(w.rect.x, w.rect.y) {
+                continue;
+            }
+            let r = loc(&w.rect);
+            let on = matches!(sel, Some((a, b)) if i >= a && i <= b);
+            let pad = 2.0 * s;
+            self.gfx.fill_round(
+                rf(r.left - pad, r.top - pad, r.right - r.left + pad * 2.0, r.bottom - r.top + pad * 2.0),
+                3.0 * s,
+                if on { p.ocr_sel } else { p.ocr },
+            );
+        }
+        let home = self.mon_at(region.x + region.w / 2, region.y + region.h / 2);
+        if idx != home {
+            return;
+        }
+        let hint = if t.reading {
+            Some("Reading text…")
+        } else if t.words.is_empty() {
+            Some("No text found. Try a bigger area")
+        } else if sel.is_none() {
+            Some("Drag across words · double-click a word · Ctrl+A for all")
+        } else {
+            None
+        };
+        let lr = loc(&region);
+        if let Some(h) = hint {
+            let f = self.gfx.fonts(s).label.clone();
+            let (tw, th) = self.gfx.text_size(h, &f);
+            let (bw, bh) = (tw + 24.0 * s, th + 10.0 * s);
+            let x = ((lr.left + lr.right) / 2.0 - bw / 2.0).clamp(4.0, (mw - bw - 4.0).max(4.0));
+            let mut y = lr.top - bh - 8.0 * s;
+            if y < 4.0 {
+                y = lr.top + 8.0 * s;
+            }
+            let r = rf(x, y, bw, bh);
+            self.gfx.fill_round(r, bh / 2.0, p.bar);
+            self.gfx.stroke_round(r, bh / 2.0, p.bar_line, 1.0);
+            self.gfx.text(h, &f, x + 12.0 * s, y + 5.0 * s, p.fg);
+        }
+        // Copy bar next to the selection.
+        let mut bar_rects = Vec::new();
+        if let Some((a, b)) = sel {
+            let t = self.text.as_ref().unwrap();
+            let (first, last) = (t.words[a].rect, t.words[b].rect);
+            let buttons = t.bar_buttons(self.keep_lines);
+            let f = self.gfx.fonts(s).label.clone();
+            let (bh, pad, icon) = (30.0 * s, 10.0 * s, 15.0 * s);
+            let widths: Vec<f32> = buttons
+                .iter()
+                .map(|(_, l, _)| {
+                    let lw = if l.is_empty() { 0.0 } else { self.gfx.text_size(l, &f).0 + 6.0 * s };
+                    pad * 2.0 + icon + lw
+                })
+                .collect();
+            let total: f32 = widths.iter().sum::<f32>() + 2.0 * s * (widths.len() as f32 - 1.0) + 6.0 * s;
+            let lf = loc(&first);
+            let ll = loc(&last);
+            let mut x = (ll.left - 40.0 * s).clamp(4.0, (mw - total - 4.0).max(4.0));
+            let mut y = ll.bottom + 10.0 * s;
+            if y + bh + 6.0 * s > mh - 4.0 {
+                y = lf.top - bh - 16.0 * s;
+                x = (lf.left - 40.0 * s).clamp(4.0, (mw - total - 4.0).max(4.0));
+            }
+            let outer = rf(x, y, total, bh + 6.0 * s);
+            self.gfx.fill_round(outer, 10.0 * s, p.bar);
+            self.gfx.stroke_round(outer, 10.0 * s, p.bar_line, 1.0);
+            let mut bx = x + 3.0 * s;
+            for ((btn, label, ic), w) in buttons.into_iter().zip(widths) {
+                let r = rf(bx, y + 3.0 * s, w, bh);
+                let g = Rect { x: mon.rect.x + r.left as i32, y: mon.rect.y + r.top as i32, w: w as i32, h: bh as i32 };
+                let hovered = g.contains(self.mouse.0, self.mouse.1);
+                let primary = btn == BarBtn::Copy;
+                if primary {
+                    self.gfx.fill_round(r, 7.0 * s, p.accent);
+                } else if hovered {
+                    self.gfx.fill_round(r, 7.0 * s, p.hover);
+                }
+                let c = if primary { p.on_accent } else if matches!(btn, BarBtn::Link(_)) { p.accent } else { p.fg };
+                let cy = r.top + bh / 2.0;
+                self.gfx.icon(ic, r.left + pad, cy - icon / 2.0, icon, c);
+                if !label.is_empty() {
+                    let (_, lh) = self.gfx.text_size(&label, &f);
+                    self.gfx.text(&label, &f, r.left + pad + icon + 6.0 * s, cy - lh / 2.0, c);
+                }
+                bar_rects.push((btn, g));
+                bx += w + 2.0 * s;
+            }
+        }
+        self.text_bar = bar_rects;
     }
 
     /// Cut the image from the frozen frame, put it on the clipboard, save it.
@@ -983,6 +1333,11 @@ impl Overlay {
                 );
             }
         }
+        if self.text.is_some() {
+            self.draw_live_text(idx);
+            self.draw_tail(idx, false);
+            return;
+        }
         let edge = if self.intent == Intent::Record {
             p.rec
         } else {
@@ -1134,11 +1489,21 @@ impl Overlay {
         if let Some((text, r)) = badge {
             self.draw_badge(&text, r, mw, mh, s, self.shape == Shape::Full);
         }
+        self.draw_tail(idx, true);
+    }
+
+    /// Toolbar, loupe and notice, drawn last on every monitor.
+    fn draw_tail(&mut self, idx: usize, allow_loupe: bool) {
+        let p = self.palette;
+        let mon = self.wins[idx].mon.clone();
+        let (mw, _mh) = (mon.rect.w as f32, mon.rect.h as f32);
+        let s = mon.scale();
         if idx == self.tb_mon {
             self.draw_toolbar_animated();
         }
         let over_bar = self.in_toolbar(self.mouse);
-        if self.magnifier
+        if allow_loupe
+            && self.magnifier
             && matches!(self.shape, Shape::Rect | Shape::Free)
             && !over_bar
             && mon.rect.contains(self.mouse.0, self.mouse.1)
@@ -1175,7 +1540,7 @@ impl Overlay {
     fn anim_progress(&self) -> (f32, f32) {
         match self.anim_t0 {
             Some(t0) => {
-                let ms = t0.elapsed().as_secs_f32() * 1000.0;
+                let ms = t0.elapsed().as_secs_f32() * 1000.0 * self.anim_speed;
                 ((ms / DIM_MS).min(1.0), (ms / BAR_MS).min(1.0))
             }
             None => (1.0, 1.0),
@@ -1514,6 +1879,19 @@ fn force_foreground(hwnd: HWND) {
         if attached {
             let _ = windows::Win32::System::Threading::AttachThreadInput(me, fg_thread, false);
         }
+    }
+}
+
+fn shell_open(target: &str) {
+    unsafe {
+        windows::Win32::UI::Shell::ShellExecuteW(
+            None,
+            w!("open"),
+            &HSTRING::from(target),
+            None,
+            None,
+            SW_SHOWNORMAL,
+        );
     }
 }
 
