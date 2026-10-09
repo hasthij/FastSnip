@@ -4,7 +4,7 @@
 
 .DESCRIPTION
   Test build (default): signs the .msix with a free self-signed certificate
-  ("CN=FastSnip Dev", created in your personal certificate store on first run)
+  ("CN=Hasthi J", created in your personal certificate store on first run)
   and puts FastSnip.msix, FastSnip.cer and install.ps1 in out\release.
 
   Store build (-Store): makes an unsigned .msixupload for Partner Center.
@@ -21,8 +21,8 @@ param(
     [ValidateSet("x64", "ARM64")] [string]$Arch = "x64",
     [switch]$Store,
     [string]$IdentityName = "FastSnip",
-    [string]$Publisher = "CN=FastSnip Dev",
-    [string]$PublisherDisplayName = "FastSnip"
+    [string]$Publisher = "CN=Hasthi J",
+    [string]$PublisherDisplayName = "Hasthi J"
 )
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
@@ -91,7 +91,7 @@ $cert = Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.Subject -eq $Publ
 if (-not $cert) {
     Write-Host "Creating a free self-signed certificate $Publisher (in your personal store, not trusted by anything yet)"
     $cert = New-SelfSignedCertificate -Type Custom -Subject $Publisher -KeyUsage DigitalSignature `
-        -FriendlyName "FastSnip test signing" -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddYears(3) `
+        -FriendlyName "Hasthi J (FastSnip signing)" -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddYears(3) `
         -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3", "2.5.29.19={text}")
 }
 $kits = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Directory | Where-Object Name -match '^10\.' | Sort-Object Name -Descending

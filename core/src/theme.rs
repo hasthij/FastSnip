@@ -131,24 +131,24 @@ pub fn palette(accent_setting: &str, theme_setting: &str) -> Palette {
         accent = mix(accent, white, 0.3);
     }
     let on_accent = if luminance(accent) > 0.4 {
-        rgb(0x06201d)
+        rgb(0x111111)
     } else {
         white
     };
     if dark {
-        let panel = rgb(0x151c1c);
+        let panel = rgb(0x1c1c1c);
         Palette {
             dark,
             accent,
             accent_soft: mix(panel, accent, 0.16),
             on_accent,
             rec: rgb(0xff5c5c),
-            fg: rgb(0xe6eded),
-            muted: rgb(0x93a3a3),
-            bar: rgba(0x1c2424, 0.97),
-            bar_line: rgb(0x334141),
-            hover: rgb(0x253131),
-            seg_on: rgb(0x151c1c),
+            fg: rgb(0xf2f2f2),
+            muted: rgb(0xa3a3a3),
+            bar: rgba(0x2b2b2b, 0.98),
+            bar_line: rgb(0x404040),
+            hover: rgb(0x3a3a3a),
+            seg_on: rgb(0x1f1f1f),
             dim: rgba(0x000000, 0.52),
             ocr: with_alpha(accent, 0.20),
             ocr_sel: with_alpha(accent, 0.45),
@@ -160,13 +160,13 @@ pub fn palette(accent_setting: &str, theme_setting: &str) -> Palette {
             accent_soft: mix(white, accent, 0.16),
             on_accent,
             rec: rgb(0xd93636),
-            fg: rgb(0x121a1a),
-            muted: rgb(0x566565),
-            bar: rgba(0xfbfdfd, 0.97),
-            bar_line: rgb(0xcbd7d7),
-            hover: rgb(0xe8eeee),
+            fg: rgb(0x1a1a1a),
+            muted: rgb(0x5f5f5f),
+            bar: rgba(0xf9f9f9, 0.98),
+            bar_line: rgb(0xd4d4d4),
+            hover: rgb(0xe9e9e9),
             seg_on: white,
-            dim: rgba(0x061010, 0.46),
+            dim: rgba(0x000000, 0.42),
             ocr: with_alpha(accent, 0.20),
             ocr_sel: with_alpha(accent, 0.45),
         }

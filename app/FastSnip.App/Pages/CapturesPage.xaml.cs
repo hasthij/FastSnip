@@ -56,7 +56,16 @@ public sealed partial class CapturesPage : Page
         _known.Clear();
         foreach (var i in _all) _known[i.Path] = i;
         Apply();
-        foreach (var item in _all.Where(i => i.Thumb == null).Take(300)) _ = LoadThumb(item);
+    }
+
+    private void Grid_ContainerContentChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
+    {
+        if (args.InRecycleQueue) return;
+        if (args.Item is CaptureItem item && item.Thumb == null && !item.Loading)
+        {
+            item.Loading = true;
+            _ = LoadThumb(item);
+        }
     }
 
     private Task LoadThumb(CaptureItem item) => Captures.LoadThumbAsync(item);

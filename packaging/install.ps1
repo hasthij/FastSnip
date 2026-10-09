@@ -39,6 +39,12 @@ if (-not $trusted) {
 
 Write-Host "Installing FastSnip..."
 Get-Process fastsnip, FastSnip.App -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+# A copy signed by a different publisher is a different package: remove it first.
+$publisher = $cert.Subject
+Get-AppxPackage -Name FastSnip | Where-Object { $_.Publisher -ne $publisher } | ForEach-Object {
+    Write-Host "Removing the older FastSnip from $($_.Publisher)"
+    Remove-AppxPackage -Package $_.PackageFullName
+}
 Add-AppxPackage -Path $msix -ForceUpdateFromAnyVersion -ForceApplicationShutdown
 
 $pkg = Get-AppxPackage -Name FastSnip | Select-Object -First 1

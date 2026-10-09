@@ -13,11 +13,11 @@
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
   IgnorableNamespaces="uap uap3 uap5 desktop rescap">
 
-  <Identity Name="FastSnip" Publisher="CN=FastSnip Dev" Version="0.1.0.0" />
+  <Identity Name="FastSnip" Publisher="CN=Hasthi J" Version="0.1.0.0" />
 
   <Properties>
     <DisplayName>FastSnip</DisplayName>
-    <PublisherDisplayName>FastSnip</PublisherDisplayName>
+    <PublisherDisplayName>Hasthi J</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
     <Description>Screenshots, screen recordings and text from your screen, opened in a single frame.</Description>
   </Properties>

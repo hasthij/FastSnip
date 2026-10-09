@@ -86,7 +86,13 @@ public sealed partial class SettingsPage : Page
         BuildAccentRow();
         _loading = false;
         // Loading values can move focus into the page; always start at the top.
-        DispatcherQueue.TryEnqueue(() => Scroller.ChangeView(null, 0, null, true));
+        void Top(object? s, object e)
+        {
+            Scroller.LayoutUpdated -= Top;
+            Scroller.ChangeView(null, 0, null, true);
+        }
+        Scroller.LayoutUpdated += Top;
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => Scroller.ChangeView(null, 0, null, true));
     }
 
     private void Save()
@@ -320,14 +326,19 @@ public sealed partial class SettingsPage : Page
                 new TextBlock { Text = "Custom" },
             },
         };
-        var picker = new ColorPicker { IsAlphaEnabled = false, IsMoreButtonVisible = false, ColorSpectrumShape = ColorSpectrumShape.Ring };
-        if (isCustom && Look.TryParseHex(current, out var start)) picker.Color = start;
-        var apply = new Button { Content = "Use this color", HorizontalAlignment = HorizontalAlignment.Right, Style = (Style)Application.Current.Resources["AccentButtonStyle"] };
-        var flyout = new Flyout { Content = new StackPanel { Spacing = 8, Children = { picker, apply } } };
-        apply.Click += (_, _) =>
+        var flyout = new Flyout();
+        flyout.Opening += (_, _) =>
         {
-            flyout.Hide();
-            SetAccent(Look.ToHex(picker.Color));
+            if (flyout.Content != null) return;
+            var picker = new ColorPicker { IsAlphaEnabled = false, IsMoreButtonVisible = false, ColorSpectrumShape = ColorSpectrumShape.Ring };
+            if (isCustom && Look.TryParseHex(current, out var start)) picker.Color = start;
+            var apply = new Button { Content = "Use this color", HorizontalAlignment = HorizontalAlignment.Right, Style = (Style)Application.Current.Resources["AccentButtonStyle"] };
+            apply.Click += (_, _) =>
+            {
+                flyout.Hide();
+                SetAccent(Look.ToHex(picker.Color));
+            };
+            flyout.Content = new StackPanel { Spacing = 8, Children = { picker, apply } };
         };
         custom.Flyout = flyout;
         AccentRow.Children.Add(custom);
@@ -336,7 +347,7 @@ public sealed partial class SettingsPage : Page
         {
             "system" => "Follows your Windows accent color",
             var k when k.StartsWith('#') => $"Custom {k.ToUpperInvariant()}",
-            var k => (Look.Presets.FirstOrDefault(p => p.Key == k).Name ?? "Teal") + ". The window picks up a new accent the next time it opens.",
+            var k => Look.Presets.FirstOrDefault(p => p.Key == k).Name ?? "Teal",
         };
     }
 
@@ -344,6 +355,7 @@ public sealed partial class SettingsPage : Page
     {
         C.Set("look", "accent", key);
         Save();
+        App.Window?.RefreshAccent();
         BuildAccentRow();
     }
 }

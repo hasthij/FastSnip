@@ -62,7 +62,7 @@
         <Grid Grid.Row="2">
             <GridView x:Name="Grid" ItemsSource="{x:Bind Groups.View, Mode=OneWay}" SelectionMode="Single"
                       IsItemClickEnabled="True" ItemClick="Grid_ItemClick" Padding="0,0,0,24"
-                      RightTapped="Grid_RightTapped">
+                      RightTapped="Grid_RightTapped" ContainerContentChanging="Grid_ContainerContentChanging">
                 <GridView.GroupStyle>
                     <GroupStyle>
                         <GroupStyle.HeaderTemplate>

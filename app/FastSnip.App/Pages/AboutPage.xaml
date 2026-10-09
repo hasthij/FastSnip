@@ -13,12 +13,14 @@
             </StackPanel>
         </StackPanel>
         <TextBlock TextWrapping="Wrap" Text="Screenshots, recordings and text from your screen, opened in a single frame. Free and open source under the GNU GPL v3." />
+        <TextBlock Text="Made by Hasthi J" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
         <TextBlock TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                    Text="Icons: Lucide (ISC license). Text recognition: Windows.Media.Ocr and Windows AI Text Recognizer. Drawing: Win2D." />
         <StackPanel Orientation="Horizontal" Spacing="8">
             <Button Content="Open screenshots folder" Click="OpenShots_Click" />
             <Button Content="Open settings folder" Click="OpenConfig_Click" />
             <Button Content="Run setup again" Click="Setup_Click" />
+            <Button Content="Quit FastSnip" Click="Quit_Click" ToolTipService.ToolTip="Stops the shortcuts, the tray icon and this window" />
         </StackPanel>
     </StackPanel>
 </Page>

@@ -42,11 +42,22 @@ public static class Look
         return TryParseHex(a, out var c) ? c : Presets[0].Light;
     }
 
-    /// Override the system accent resources. Call before the window is created.
+    private static readonly string[] AccentKeys =
+    {
+        "SystemAccentColor", "SystemAccentColorLight1", "SystemAccentColorLight2", "SystemAccentColorLight3",
+        "SystemAccentColorDark1", "SystemAccentColorDark2", "SystemAccentColorDark3",
+    };
+
+    /// Override the system accent resources (or remove the overrides for Follow Windows).
     public static void ApplyAccent(ResourceDictionary res, Config cfg)
     {
         var accent = Accent(cfg);
-        if (accent is not Color c) return;
+        if (accent is not Color c)
+        {
+            // Follow Windows: drop our overrides so the system accent shows through.
+            foreach (var k in AccentKeys) res.Remove(k);
+            return;
+        }
         var white = Hex(0xffffff);
         var black = Hex(0x000000);
         res["SystemAccentColor"] = c;

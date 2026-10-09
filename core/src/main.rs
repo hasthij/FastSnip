@@ -129,6 +129,39 @@ fn post(hwnd: HWND, code: usize) {
     }
 }
 
+/// Quit from the tray or `--quit`: stop everything FastSnip runs, not just this core.
+fn quit_all() {
+    if let Some(l) = find(LISTENER_SHARED) {
+        post(l, REMOTE_QUIT);
+    }
+    close_app_windows();
+    unsafe { PostQuitMessage(0) };
+}
+
+/// Ask every open FastSnip window (FastSnip.App.exe) to close.
+fn close_app_windows() {
+    use windows::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
+    unsafe extern "system" fn cb(h: HWND, _: LPARAM) -> windows::core::BOOL {
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(h, Some(&mut pid));
+        if let Ok(proc_) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
+            let mut buf = [0u16; 512];
+            let mut len = buf.len() as u32;
+            if QueryFullProcessImageNameW(proc_, PROCESS_NAME_WIN32, windows::core::PWSTR(buf.as_mut_ptr()), &mut len).is_ok() {
+                let path = String::from_utf16_lossy(&buf[..len as usize]);
+                if path.to_ascii_lowercase().ends_with(r"\fastsnip.app.exe") && IsWindowVisible(h).as_bool() {
+                    let _ = PostMessageW(Some(h), WM_CLOSE, WPARAM(0), LPARAM(0));
+                }
+            }
+            let _ = CloseHandle(proc_);
+        }
+        true.into()
+    }
+    unsafe {
+        let _ = EnumWindows(Some(cb), LPARAM(0));
+    }
+}
+
 fn spawn_self(args: &[&str]) {
     if let Ok(exe) = std::env::current_exe() {
         let _ = std::process::Command::new(exe).args(args).spawn();
@@ -313,7 +346,7 @@ fn tray_command(main: HWND, cmd: u32) {
         tray::CMD_RECORD => act(Action::RecordFullScreen),
         tray::CMD_TEXT => act(Action::GrabText),
         tray::CMD_SETTINGS => overlay::open_app_with(&["--settings"]),
-        tray::CMD_QUIT => unsafe { PostQuitMessage(0) },
+        tray::CMD_QUIT => quit_all(),
         _ => {}
     }
     let _ = main;
@@ -329,7 +362,7 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             if msg == WM_REMOTE {
                 match wp.0 {
                     REMOTE_QUIT => {
-                        PostQuitMessage(0);
+                        quit_all();
                         return LRESULT(0);
                     }
                     REMOTE_RELOAD => {
@@ -437,6 +470,19 @@ fn benches(arg: &str) -> bool {
             let size = std::fs::metadata(&out).map(|m| m.len()).unwrap_or(0);
             eprintln!("rec: {:?} err={:?} {:.1}s {} KB", d.path, d.error, d.seconds, size / 1024);
             let _ = std::fs::remove_file(&out);
+        }
+        "--bench-dup" => {
+            // Cost of opening desktop duplication from scratch (what releasing it while idle would add).
+            let g = gfx::Gfx::new().expect("gfx");
+            for _ in 0..3 {
+                let t = Instant::now();
+                let mut d = dup::Dup::new(&g.d3d).expect("dup");
+                let t_new = t.elapsed();
+                let shots = d.grab();
+                eprintln!("dup open {:.1} ms, first grab {:.1} ms ({} displays)", t_new.as_secs_f64() * 1000.0, (t.elapsed() - t_new).as_secs_f64() * 1000.0, shots.len());
+                drop(d);
+                std::thread::sleep(std::time::Duration::from_millis(300));
+            }
         }
         "--bench-ocr" => {
             let f = capture::grab().expect("grab");

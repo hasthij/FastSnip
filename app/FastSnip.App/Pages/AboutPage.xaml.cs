@@ -28,4 +28,11 @@ public sealed partial class AboutPage : Page
     }
 
     private void Setup_Click(object sender, RoutedEventArgs e) => App.Window?.Show("setup");
+
+    private void Quit_Click(object sender, RoutedEventArgs e)
+    {
+        // The core stops itself and its listener, and closes this window too.
+        Core.Run("--quit");
+        App.Window?.Close();
+    }
 }

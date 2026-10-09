@@ -34,13 +34,23 @@ public sealed partial class MainWindow : Window
 
     public void ApplyTheme() => Root.RequestedTheme = Look.Theme(App.Settings);
 
+    /// Re-read the accent and repaint every control with it (buttons, toggles, sliders).
+    public void RefreshAccent()
+    {
+        Look.ApplyAccent(Application.Current.Resources, App.Settings);
+        // Flipping the theme makes XAML look up every theme resource again.
+        var want = Look.Theme(App.Settings);
+        Root.RequestedTheme = Root.ActualTheme == ElementTheme.Dark ? ElementTheme.Light : ElementTheme.Dark;
+        Root.RequestedTheme = want;
+    }
+
     /// Show a page; `file` opens that capture in the editor.
     public void Show(string page, string? file = null)
     {
         if (page == "setup")
         {
             Nav.IsPaneVisible = false;
-            ContentFrame.Navigate(typeof(SetupPage));
+            ContentFrame.Navigate(typeof(SetupPage), null, new Microsoft.UI.Xaml.Media.Animation.SuppressNavigationTransitionInfo());
         }
         else
         {
@@ -68,7 +78,8 @@ public sealed partial class MainWindow : Window
             "about" => typeof(AboutPage),
             _ => typeof(CapturesPage),
         };
-        ContentFrame.Navigate(type);
+        // No slide-in animation: pages switch instantly.
+        ContentFrame.Navigate(type, null, new Microsoft.UI.Xaml.Media.Animation.SuppressNavigationTransitionInfo());
     }
 
     private void Nav_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)

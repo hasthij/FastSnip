@@ -20,6 +20,7 @@ public sealed class CaptureItem : System.ComponentModel.INotifyPropertyChanged
     private BitmapImage? _thumb;
     public BitmapImage? Thumb { get => _thumb; set { _thumb = value; Changed(nameof(Thumb)); } }
     public string Name => System.IO.Path.GetFileName(Path);
+    public bool Loading { get; set; }
     /// Words read from the screenshot at capture time (for search).
     public string Text { get; set; } = "";
 }
@@ -93,7 +94,8 @@ public static class Captures
         try
         {
             var file = await StorageFile.GetFileFromPathAsync(item.Path);
-            var bmp = new BitmapImage { DecodePixelWidth = 400 };
+            // Cards are 200 px wide: decode to that (in physical pixels at 150%), not full size.
+            var bmp = new BitmapImage { DecodePixelWidth = 300 };
             if (item.IsVideo)
             {
                 using var thumb = await file.GetThumbnailAsync(ThumbnailMode.VideosView, 400, ThumbnailOptions.ResizeThumbnail);

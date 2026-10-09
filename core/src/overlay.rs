@@ -1695,7 +1695,7 @@ impl Overlay {
                     r.left + 12.0 * s,
                     r.top + 5.0 * s,
                     if p.dark {
-                        theme::rgb(0x0d1212)
+                        theme::rgb(0x111111)
                     } else {
                         theme::rgb(0xffffff)
                     },
