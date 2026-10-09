@@ -2114,7 +2114,11 @@ pub fn log(s: &str) {
         let t = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
         let line = format!("{:02}:{:02}:{:02}.{:03} {s}\n", t.wHour, t.wMinute, t.wSecond, t.wMilliseconds);
         use std::io::Write;
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        // Plain write + seek (not append mode): inside the MSIX, AppData is redirected
+        // and append-only opens of a file that exists outside the package fail.
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).write(true).open(&path) {
+            use std::io::{Seek, SeekFrom};
+            let _ = f.seek(SeekFrom::End(0));
             let _ = f.write_all(line.as_bytes());
         }
     }

@@ -10,8 +10,22 @@ public sealed partial class AboutPage : Page
     {
         InitializeComponent();
         NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
-        var v = typeof(AboutPage).Assembly.GetName().Version;
-        Version.Text = $"Version {v?.Major}.{v?.Minor}.{v?.Build}";
+        Version.Text = $"Version {AppVersion()}";
+    }
+
+    /// The installed package's version (what Windows shows), or the build's when not packaged.
+    public static string AppVersion()
+    {
+        try
+        {
+            var v = Windows.ApplicationModel.Package.Current.Id.Version;
+            return $"{v.Major}.{v.Minor}.{v.Build}";
+        }
+        catch
+        {
+            var v = typeof(AboutPage).Assembly.GetName().Version;
+            return $"{v?.Major}.{v?.Minor}.{v?.Build} (development)";
+        }
     }
 
     private async void OpenShots_Click(object sender, RoutedEventArgs e)
