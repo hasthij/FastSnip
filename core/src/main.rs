@@ -428,6 +428,22 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             overlay::with(|o| o.on_element(*found));
             LRESULT(0)
         }
+        WM_POWERBROADCAST => {
+            // PBT_APMRESUMEAUTOMATIC / PBT_APMRESUMESUSPEND
+            if wp.0 == 0x12 || wp.0 == 0x7 {
+                overlay::log("resumed from sleep; renewing screen grab");
+                overlay::with(|o| o.refresh_grab());
+            }
+            LRESULT(1)
+        }
+        WM_WTSSESSION_CHANGE => {
+            // WTS_SESSION_UNLOCK
+            if wp.0 == 0x8 {
+                overlay::log("session unlocked; renewing screen grab");
+                overlay::with(|o| o.refresh_grab());
+            }
+            LRESULT(0)
+        }
         WM_DISPLAYCHANGE | WM_SETTINGCHANGE => {
             let cfg = Config::load();
             overlay::with(|o| {
@@ -560,6 +576,10 @@ fn main() {
     hotkey::set_bindings(&cfg.shortcuts);
     let main = make_window(MAIN_CLASS, Some(main_proc));
     let _shared = publish(CORE_SHARED, main);
+    unsafe {
+        // Unlock notifications (WM_WTSSESSION_CHANGE), to renew the screen grab after the lock screen.
+        let _ = windows::Win32::System::RemoteDesktop::WTSRegisterSessionNotification(main, windows::Win32::System::RemoteDesktop::NOTIFY_FOR_THIS_SESSION);
+    }
     overlay::register_class();
     recui::install(main, &cfg);
     notify::install(main, &cfg);

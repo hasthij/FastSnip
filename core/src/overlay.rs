@@ -334,6 +334,38 @@ impl Overlay {
         }
     }
 
+    /// Sleep, a driver update or a GPU reset can remove the D3D device. Every
+    /// texture and swap chain on it then draws black, so rebuild everything.
+    fn recover_if_device_lost(&mut self) {
+        let lost = unsafe { self.gfx.d3d.GetDeviceRemovedReason() }.is_err();
+        if !lost {
+            return;
+        }
+        log("graphics device was reset; rebuilding");
+        let Ok(gfx) = Gfx::new() else {
+            log("couldn't rebuild graphics");
+            return;
+        };
+        for w in self.wins.drain(..) {
+            unsafe {
+                let _ = DestroyWindow(w.hwnd);
+            }
+        }
+        self.dash = gfx.dash_style();
+        self.gfx = gfx;
+        self.dup = if crate::recui::is_busy() { None } else { Dup::new(&self.gfx.d3d).ok() };
+        self.sync_windows();
+        self.render_all();
+    }
+
+    /// After wake from sleep or unlocking, the screen grab may be stale: renew it.
+    pub fn refresh_grab(&mut self) {
+        self.recover_if_device_lost();
+        if let Some(d) = &mut self.dup {
+            d.reset();
+        }
+    }
+
     pub fn displays_changed(&mut self) {
         if let Some(d) = &mut self.dup {
             d.reset();
@@ -403,7 +435,20 @@ impl Overlay {
         }
         let t0 = Instant::now();
         // Freeze first: GPU copy of every monitor (~1-2 ms), GDI as fallback.
-        let shots = self.dup.as_mut().map(|d| d.grab()).unwrap_or_default();
+        self.recover_if_device_lost();
+        let mut shots = self.dup.as_mut().map(|d| d.grab()).unwrap_or_default();
+        if !shots.is_empty() && self.dup.as_mut().map(|d| d.looks_black(&shots)).unwrap_or(false) {
+            // Stale/empty frame (lock screen, UAC, sleep): reopen the duplication and try again.
+            log("screen grab came back black; reopening desktop duplication");
+            if let Some(d) = &mut self.dup {
+                d.reset();
+                shots = d.grab();
+                if d.looks_black(&shots) {
+                    log("still black; using the GDI grab");
+                    shots.clear();
+                }
+            }
+        }
         let t_grab = t0.elapsed();
         self.sync_windows();
         let gpu_ok = !shots.is_empty()
@@ -2098,6 +2143,27 @@ pub fn open_app_with(args: &[&str]) {
     crate::notify::message("The FastSnip window isn't installed");
 }
 
+/// %LOCALAPPDATA%\FastSnip, or inside the MSIX the package's own LocalCache
+/// copy of it (writing through the redirected AppData view fails for files
+/// that also exist outside the package).
+fn log_dir() -> Option<std::path::PathBuf> {
+    let local = std::path::PathBuf::from(std::env::var_os("LOCALAPPDATA")?);
+    let mut len = 0u32;
+    unsafe {
+        let _ = windows::Win32::Storage::Packaging::Appx::GetCurrentPackageFamilyName(&mut len, None);
+        if len > 0 {
+            let mut buf = vec![0u16; len as usize];
+            if windows::Win32::Storage::Packaging::Appx::GetCurrentPackageFamilyName(&mut len, Some(windows::core::PWSTR(buf.as_mut_ptr())))
+                == windows::Win32::Foundation::ERROR_SUCCESS
+            {
+                let fam = String::from_utf16_lossy(&buf[..(len as usize).saturating_sub(1)]);
+                return Some(local.join("Packages").join(fam).join("LocalCache").join("Local").join("FastSnip"));
+            }
+        }
+    }
+    Some(local.join("FastSnip"))
+}
+
 pub fn log(s: &str) {
     let w = HSTRING::from(format!("[fastsnip] {s}\n"));
     unsafe { windows::Win32::System::Diagnostics::Debug::OutputDebugStringW(&w) };
@@ -2105,7 +2171,7 @@ pub fn log(s: &str) {
         eprintln!("[fastsnip] {s}");
     }
     // Also keep a small log file for troubleshooting (%LOCALAPPDATA%\FastSnip\core.log, ~256 KB max).
-    if let Some(dir) = std::env::var_os("LOCALAPPDATA").map(|d| std::path::PathBuf::from(d).join("FastSnip")) {
+    if let Some(dir) = log_dir() {
         let path = dir.join("core.log");
         let _ = std::fs::create_dir_all(&dir);
         if std::fs::metadata(&path).map(|m| m.len() > 256 * 1024).unwrap_or(false) {

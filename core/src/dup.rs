@@ -136,6 +136,50 @@ impl Dup {
         shots
     }
 
+    /// True if every sampled pixel of every shot is pure black. After a lock
+    /// screen, UAC prompt or session switch, duplication can hand back an
+    /// empty frame; a real desktop is never black at all 64 sample points.
+    pub fn looks_black(&mut self, shots: &[GpuShot]) -> bool {
+        const N: u32 = 8;
+        let all_black = shots.iter().all(|s| unsafe {
+            let desc = D3D11_TEXTURE2D_DESC {
+                Width: N * N,
+                Height: 1,
+                MipLevels: 1,
+                ArraySize: 1,
+                Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                Usage: D3D11_USAGE_STAGING,
+                BindFlags: 0,
+                CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
+                MiscFlags: 0,
+            };
+            let mut probe = None;
+            if self.device.CreateTexture2D(&desc, None, Some(&mut probe)).is_err() {
+                return false;
+            }
+            let probe = probe.unwrap();
+            let (w, h) = (s.rect.w as u32, s.rect.h as u32);
+            for gy in 0..N {
+                for gx in 0..N {
+                    let x = (w * (2 * gx + 1)) / (2 * N);
+                    let y = (h * (2 * gy + 1)) / (2 * N);
+                    let b = D3D11_BOX { left: x, top: y, front: 0, right: x + 1, bottom: y + 1, back: 1 };
+                    self.ctx.CopySubresourceRegion(&probe, 0, gy * N + gx, 0, 0, &s.tex, 0, Some(&b));
+                }
+            }
+            let mut m = D3D11_MAPPED_SUBRESOURCE::default();
+            if self.ctx.Map(&probe, 0, D3D11_MAP_READ, 0, Some(&mut m)).is_err() {
+                return false;
+            }
+            let px = std::slice::from_raw_parts(m.pData as *const u8, (N * N * 4) as usize);
+            let black = px.chunks_exact(4).all(|p| p[0] == 0 && p[1] == 0 && p[2] == 0);
+            self.ctx.Unmap(&probe, 0);
+            black
+        });
+        !shots.is_empty() && all_black
+    }
+
     /// CPU copy of the given shots, assembled into one frame covering `bounds`.
     pub fn readback(&mut self, shots: &[GpuShot], bounds: Rect) -> Option<Frame> {
         let stride = bounds.w as usize * 4;
