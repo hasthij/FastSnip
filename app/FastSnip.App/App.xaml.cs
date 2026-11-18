@@ -66,7 +66,7 @@ public partial class App : Application
         };
 
         Look.ApplyAccent(Resources, Settings);
-        Core.EnsureRunning();
+        _ = Task.Run(Core.EnsureRunning);
         var (page, file) = ParseArgs(Environment.GetCommandLineArgs().Skip(1));
         if (!Settings.GetBool("setup", "done", false) && page == "captures") page = "setup";
         Window = new MainWindow();

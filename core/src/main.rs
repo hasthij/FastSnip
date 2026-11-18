@@ -432,6 +432,7 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             // PBT_APMRESUMEAUTOMATIC / PBT_APMRESUMESUSPEND
             if wp.0 == 0x12 || wp.0 == 0x7 {
                 overlay::log("resumed from sleep; renewing screen grab");
+                hotkey::reinstall();
                 overlay::with(|o| o.refresh_grab());
             }
             LRESULT(1)
@@ -440,6 +441,7 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             // WTS_SESSION_UNLOCK
             if wp.0 == 0x8 {
                 overlay::log("session unlocked; renewing screen grab");
+                hotkey::reinstall();
                 overlay::with(|o| o.refresh_grab());
             }
             LRESULT(0)

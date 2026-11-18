@@ -46,6 +46,7 @@ function Native([string]$exe, [string[]]$argv) {
 
 Step "Core (Rust, $Arch)"
 Push-Location (Join-Path $root "core")
+$env:FASTSNIP_VERSION = $Version
 Native cargo @("build", "--release", "--target", $rustTarget)
 Pop-Location
 $coreExe = Join-Path $root "core\target\$rustTarget\release\fastsnip.exe"
@@ -63,7 +64,7 @@ try {
         "publish", $app, "-c", "Release", "-r", $rid, "-p:Platform=$Arch",
         "-p:WindowsPackageType=MSIX", "-p:GenerateAppxPackageOnBuild=true",
         "-p:AppxPackageSigningEnabled=false", "-p:AppxBundle=Never",
-        "-p:CoreExe=$coreExe", "-p:AppxPackageDir=$out\pkg\"
+        "-p:CoreExe=$coreExe", "-p:Version=$($Version.Substring(0, $Version.LastIndexOf('.')))", "-p:AssemblyVersion=$Version", "-p:FileVersion=$Version", "-p:AppxPackageDir=$out\pkg\"
     )
     if ($Store) { $pub += "-p:UapAppxPackageBuildMode=StoreUpload" }
     Native dotnet $pub

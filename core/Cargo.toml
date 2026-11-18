@@ -13,6 +13,9 @@ path = "src/main.rs"
 # Release build that keeps a console for timing logs (FASTSNIP_LOG=1).
 console = []
 
+[build-dependencies]
+winresource = "0.1"
+
 [dependencies]
 png = "0.18"
 serde = { version = "1", features = ["derive"] }

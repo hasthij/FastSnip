@@ -7,12 +7,37 @@
     KeyboardAcceleratorPlacementMode="Hidden">
 
     <Page.Resources>
+        <!-- Selected tool: soft neutral fill + accent outline (keeps the line icons readable). -->
+        <SolidColorBrush x:Key="ToggleButtonBackgroundChecked" Color="#2A808080" />
+        <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPointerOver" Color="#38808080" />
+        <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPressed" Color="#22808080" />
+        <SolidColorBrush x:Key="ToggleButtonBorderBrushChecked" Color="{ThemeResource SystemAccentColor}" />
+        <SolidColorBrush x:Key="ToggleButtonBorderBrushCheckedPointerOver" Color="{ThemeResource SystemAccentColor}" />
+        <SolidColorBrush x:Key="ToggleButtonBorderBrushCheckedPressed" Color="{ThemeResource SystemAccentColor}" />
+        <SolidColorBrush x:Key="ToggleButtonForegroundChecked" Color="{ThemeResource TextFillColorPrimary}" />
+        <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPointerOver" Color="{ThemeResource TextFillColorPrimary}" />
+        <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPressed" Color="{ThemeResource TextFillColorPrimary}" />
+
         <Style x:Key="ToolButton" TargetType="ToggleButton" BasedOn="{StaticResource DefaultToggleButtonStyle}">
             <Setter Property="Width" Value="40" />
             <Setter Property="Height" Value="40" />
             <Setter Property="Padding" Value="0" />
             <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+        </Style>
+        <Style x:Key="BarButton" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+            <Setter Property="Padding" Value="9,3" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderThickness" Value="0" />
+        </Style>
+        <Style x:Key="Ico" TargetType="Path">
+            <Setter Property="Stroke" Value="{ThemeResource TextFillColorPrimaryBrush}" />
+            <Setter Property="StrokeThickness" Value="1.6" />
+            <Setter Property="StrokeLineJoin" Value="Round" />
+            <Setter Property="StrokeStartLineCap" Value="Round" />
+            <Setter Property="StrokeEndLineCap" Value="Round" />
         </Style>
     </Page.Resources>
 
@@ -35,7 +60,7 @@
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="56" />
                 <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="220" />
+                <ColumnDefinition Width="236" />
             </Grid.ColumnDefinitions>
 
             <Grid Grid.ColumnSpan="3" Padding="16,4,16,10" ColumnSpacing="8">
@@ -47,7 +72,10 @@
                     <TextBlock x:Name="FileName" Style="{StaticResource BodyStrongTextBlockStyle}" TextTrimming="CharacterEllipsis" />
                     <TextBlock x:Name="FileInfoText" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                 </StackPanel>
-                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                    <Button Width="36" Height="32" Padding="0" Background="Transparent" BorderThickness="0" Click="Undo_Click" ToolTipService.ToolTip="Undo (Ctrl+Z)"><FontIcon Glyph="&#xE7A7;" FontSize="15" /></Button>
+                    <Button Width="36" Height="32" Padding="0" Background="Transparent" BorderThickness="0" Click="Redo_Click" ToolTipService.ToolTip="Redo (Ctrl+Y)"><FontIcon Glyph="&#xE7A6;" FontSize="15" /></Button>
+                    <Rectangle Width="1" Height="20" Margin="4,0" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
                     <Button Click="Copy_Click" ToolTipService.ToolTip="Copy (Ctrl+C)">
                         <StackPanel Orientation="Horizontal" Spacing="8"><FontIcon Glyph="&#xE8C8;" FontSize="14" /><TextBlock Text="Copy" /></StackPanel>
                     </Button>
@@ -59,61 +87,105 @@
             </Grid>
 
             <!-- Tools -->
-            <StackPanel x:Name="Rail" Grid.Row="1" Spacing="2" Padding="8,4" BorderThickness="0,1,1,0"
-                        BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}">
-                <ToggleButton x:Name="ToolCrop" Style="{StaticResource ToolButton}" Tag="crop" Click="Tool_Click" ToolTipService.ToolTip="Crop (C)"><FontIcon Glyph="&#xE7A8;" FontSize="16" /></ToggleButton>
-                <ToggleButton x:Name="ToolPen" Style="{StaticResource ToolButton}" Tag="pen" Click="Tool_Click" ToolTipService.ToolTip="Pen (P)"><FontIcon Glyph="&#xE70F;" FontSize="16" /></ToggleButton>
-                <ToggleButton x:Name="ToolHighlighter" Style="{StaticResource ToolButton}" Tag="highlighter" Click="Tool_Click" ToolTipService.ToolTip="Highlighter (H)"><FontIcon Glyph="&#xE7E6;" FontSize="16" /></ToggleButton>
-                <ToggleButton x:Name="ToolArrow" Style="{StaticResource ToolButton}" Tag="arrow" Click="Tool_Click" ToolTipService.ToolTip="Arrow (A)" IsChecked="True">
-                    <FontIcon Glyph="&#xE72A;" FontSize="16" RenderTransformOrigin="0.5,0.5"><FontIcon.RenderTransform><RotateTransform Angle="-45" /></FontIcon.RenderTransform></FontIcon>
-                </ToggleButton>
-                <ToggleButton x:Name="ToolBox" Style="{StaticResource ToolButton}" Tag="box" Click="Tool_Click" ToolTipService.ToolTip="Box (B)"><FontIcon Glyph="&#xE739;" FontSize="16" /></ToggleButton>
-                <ToggleButton x:Name="ToolText" Style="{StaticResource ToolButton}" Tag="text" Click="Tool_Click" ToolTipService.ToolTip="Text (T)"><FontIcon Glyph="&#xE8D2;" FontSize="16" /></ToggleButton>
-                <ToggleButton x:Name="ToolBlur" Style="{StaticResource ToolButton}" Tag="blur" Click="Tool_Click" ToolTipService.ToolTip="Blur (X)"><FontIcon Glyph="&#xE80A;" FontSize="16" /></ToggleButton>
-                <ToggleButton x:Name="ToolStep" Style="{StaticResource ToolButton}" Tag="step" Click="Tool_Click" ToolTipService.ToolTip="Step numbers (N)">
-                    <Border Width="20" Height="20" CornerRadius="10" BorderThickness="1.5" BorderBrush="{ThemeResource TextFillColorPrimaryBrush}">
-                        <TextBlock Text="1" FontSize="11" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                    </Border>
-                </ToggleButton>
-                <Rectangle Height="1" Margin="6,6" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
-                <Button Width="40" Height="40" Padding="0" Background="Transparent" BorderThickness="0" Click="Undo_Click" ToolTipService.ToolTip="Undo (Ctrl+Z)"><FontIcon Glyph="&#xE7A7;" FontSize="16" /></Button>
-                <Button Width="40" Height="40" Padding="0" Background="Transparent" BorderThickness="0" Click="Redo_Click" ToolTipService.ToolTip="Redo (Ctrl+Y)"><FontIcon Glyph="&#xE7A6;" FontSize="16" /></Button>
-            </StackPanel>
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" BorderThickness="0,1,1,0"
+                          BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}">
+                <StackPanel x:Name="Rail" Spacing="2" Padding="7,6">
+                    <ToggleButton Style="{StaticResource ToolButton}" Tag="select" Click="Tool_Click" ToolTipService.ToolTip="Select and move (V)">
+                        <Canvas Width="20" Height="20"><Path Style="{StaticResource Ico}" Data="M5,3 L5,15 L8.2,12 L10.6,17 L12.4,16.2 L10,11.3 L14.5,11.3 Z" /></Canvas>
+                    </ToggleButton>
+                    <ToggleButton Style="{StaticResource ToolButton}" Tag="crop" Click="Tool_Click" ToolTipService.ToolTip="Crop (C)">
+                        <Canvas Width="20" Height="20"><Path Style="{StaticResource Ico}" Data="M6,2 V14 H18 M2,6 H14 V18" /></Canvas>
+                    </ToggleButton>
+                    <Rectangle Height="1" Margin="6,4" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                    <ToggleButton Style="{StaticResource ToolButton}" Tag="pen" Click="Tool_Click" ToolTipService.ToolTip="Pen (P)">
+                        <Canvas Width="20" Height="20"><Path Style="{StaticResource Ico}" Data="M3,17 L4,13 L13.5,3.5 L16.5,6.5 L7,16 Z M11.5,5.5 L14.5,8.5" /></Canvas>
+                    </ToggleButton>
+                    <ToggleButton Style="{StaticResource ToolButton}" Tag="highlighter" Click="Tool_Click" ToolTipService.ToolTip="Highlighter (H)">
+                        <Canvas Width="20" Height="20"><Path Style="{StaticResource Ico}" Data="M3,17.5 H8.5 M6.5,14 L14,6.5 L17,9.5 L9.5,17 L6.5,17 Z" /></Canvas>
+                    </ToggleButton>
+                    <ToggleButton Style="{StaticResource ToolButton}" Tag="arrow" Click="Tool_Click" ToolTipService.ToolTip="Arrow (A)">
+                        <Canvas Width="20" Height="20"><Path Style="{StaticResource Ico}" Data="M4,16 L16,4 M8,4 H16 V12" /></Canvas>
+                    </ToggleButton>
+                    <ToggleButton Style="{StaticResource ToolButton}" Tag="line" Click="Tool_Click" ToolTipService.ToolTip="Line (L)">
+                        <Canvas Width="20" Height="20"><Path Style="{StaticResource Ico}" Data="M4,16 L16,4" /></Canvas>
+                    </ToggleButton>
+                    <ToggleButton Style="{StaticResource ToolButton}" Tag="box" Click="Tool_Click" ToolTipService.ToolTip="Rectangle (B)">
+                        <Canvas Width="20" Height="20"><Path Style="{StaticResource Ico}" Data="M3.5,5 H16.5 V15 H3.5 Z" /></Canvas>
+                    </ToggleButton>
+                    <ToggleButton Style="{StaticResource ToolButton}" Tag="ellipse" Click="Tool_Click" ToolTipService.ToolTip="Ellipse (E)">
+                        <Canvas Width="20" Height="20"><Path Style="{StaticResource Ico}" Data="M3,10 A7,5 0 1 0 17,10 A7,5 0 1 0 3,10 Z" /></Canvas>
+                    </ToggleButton>
+                    <ToggleButton Style="{StaticResource ToolButton}" Tag="text" Click="Tool_Click" ToolTipService.ToolTip="Text (T)">
+                        <Canvas Width="20" Height="20"><Path Style="{StaticResource Ico}" Data="M4,5.5 V3.5 H16 V5.5 M10,3.5 V16.5 M7.5,16.5 H12.5" /></Canvas>
+                    </ToggleButton>
+                    <ToggleButton Style="{StaticResource ToolButton}" Tag="step" Click="Tool_Click" ToolTipService.ToolTip="Step number (N)">
+                        <Border Width="20" Height="20" CornerRadius="10" BorderThickness="1.6" BorderBrush="{ThemeResource TextFillColorPrimaryBrush}">
+                            <TextBlock Text="1" FontSize="11" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                    </ToggleButton>
+                    <ToggleButton Style="{StaticResource ToolButton}" Tag="pixelate" Click="Tool_Click" ToolTipService.ToolTip="Pixelate (X)">
+                        <Canvas Width="20" Height="20"><Path Style="{StaticResource Ico}" Data="M3,3 H17 V17 H3 Z M10,3 V17 M3,10 H17 M3,6.5 H6.5 V10 M13.5,10 V13.5 H17" /></Canvas>
+                    </ToggleButton>
+                </StackPanel>
+            </ScrollViewer>
 
             <!-- Canvas -->
             <Grid x:Name="CanvasHost" Grid.Row="1" Grid.Column="1" Background="{ThemeResource LayerFillColorDefaultBrush}"
                   BorderThickness="0,1,0,0" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}">
-                <canvas:CanvasControl x:Name="Canvas" UseSharedDevice="True" Draw="Canvas_Draw" CreateResources="Canvas_CreateResources"
-                                      PointerPressed="Canvas_PointerPressed" PointerMoved="Canvas_PointerMoved"
-                                      PointerReleased="Canvas_PointerReleased" SizeChanged="Canvas_SizeChanged"
-                                      ClearColor="Transparent" />
-                <Canvas x:Name="TextLayer" IsHitTestVisible="True">
-                    <TextBox x:Name="TextEntry" Visibility="Collapsed" MinWidth="120" PlaceholderText="Type, then Enter"
-                             KeyDown="TextEntry_KeyDown" LostFocus="TextEntry_LostFocus" />
+                <canvas:CanvasControl x:Name="Surface" UseSharedDevice="True" Draw="Surface_Draw"
+                                      PointerPressed="Surface_PointerPressed" PointerMoved="Surface_PointerMoved"
+                                      PointerReleased="Surface_PointerReleased" PointerCaptureLost="Surface_CaptureLost"
+                                      PointerWheelChanged="Surface_Wheel" DoubleTapped="Surface_DoubleTapped"
+                                      SizeChanged="Surface_SizeChanged" ClearColor="Transparent" />
+                <Canvas x:Name="TextLayer">
+                    <TextBox x:Name="TextEntry" Visibility="Collapsed" MinWidth="120" AcceptsReturn="True" TextWrapping="NoWrap"
+                             PlaceholderText="Type, Enter to place" KeyDown="TextEntry_KeyDown" LostFocus="TextEntry_LostFocus" />
                 </Canvas>
-                <Border Padding="10,4" Margin="12" CornerRadius="6" HorizontalAlignment="Left" VerticalAlignment="Bottom"
-                        Background="{ThemeResource AcrylicInAppFillColorDefaultBrush}">
-                    <TextBlock x:Name="Hint" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                </Border>
-                <Button x:Name="ApplyCrop" Visibility="Collapsed" Style="{StaticResource AccentButtonStyle}" Margin="12"
-                        HorizontalAlignment="Right" VerticalAlignment="Bottom" Content="Apply crop" Click="ApplyCrop_Click" />
+                <Grid Margin="12" VerticalAlignment="Bottom" ColumnSpacing="12" IsHitTestVisible="True">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Border Padding="10,5" CornerRadius="6" HorizontalAlignment="Left" Background="{ThemeResource AcrylicInAppFillColorDefaultBrush}">
+                        <TextBlock x:Name="Hint" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" />
+                    </Border>
+                    <Border Grid.Column="1" Padding="4,2" CornerRadius="6" Background="{ThemeResource AcrylicInAppFillColorDefaultBrush}">
+                        <StackPanel Orientation="Horizontal" Spacing="0">
+                            <Button Style="{StaticResource BarButton}" Content="&#x2212;" Click="ZoomOut_Click" ToolTipService.ToolTip="Zoom out" />
+                            <TextBlock x:Name="ZoomText" Width="46" TextAlignment="Center" VerticalAlignment="Center" FontSize="12" FontFamily="{StaticResource MonoFont}" />
+                            <Button Style="{StaticResource BarButton}" Content="+" Click="ZoomIn_Click" ToolTipService.ToolTip="Zoom in" />
+                            <Button Style="{StaticResource BarButton}" Content="Fit" Click="ZoomFit_Click" ToolTipService.ToolTip="Fit to window (0)" />
+                            <Button Style="{StaticResource BarButton}" Content="100%" Click="ZoomActual_Click" ToolTipService.ToolTip="Actual size (1)" />
+                        </StackPanel>
+                    </Border>
+                </Grid>
             </Grid>
 
-            <!-- Options for the current tool -->
-            <StackPanel Grid.Row="1" Grid.Column="2" Padding="16,12" Spacing="18" BorderThickness="1,1,0,0"
+            <!-- Options for the current tool / selection -->
+            <StackPanel Grid.Row="1" Grid.Column="2" Padding="16,14" Spacing="18" BorderThickness="1,1,0,0"
                         BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}">
-                <StackPanel Spacing="8">
+                <TextBlock x:Name="InspectorTitle" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                <StackPanel x:Name="ColorPanel" Spacing="8">
                     <TextBlock Text="Color" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    <VariableSizedWrapGrid x:Name="Swatches" Orientation="Horizontal" MaximumRowsOrColumns="7" ItemWidth="26" ItemHeight="26" />
+                    <VariableSizedWrapGrid x:Name="Swatches" Orientation="Horizontal" MaximumRowsOrColumns="6" ItemWidth="34" ItemHeight="32" />
                 </StackPanel>
-                <StackPanel Spacing="4">
+                <StackPanel x:Name="WidthPanel" Spacing="4">
                     <TextBlock x:Name="WidthLabel" Text="Thickness · 4 px" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     <Slider x:Name="WidthSlider" Minimum="1" Maximum="24" Value="4" StepFrequency="1" ValueChanged="WidthSlider_ValueChanged" />
                 </StackPanel>
-                <StackPanel Spacing="4">
+                <StackPanel x:Name="FontPanel" Spacing="4">
                     <TextBlock x:Name="FontLabel" Text="Text size · 22 px" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    <Slider x:Name="FontSlider" Minimum="10" Maximum="72" Value="22" StepFrequency="1" ValueChanged="FontSlider_ValueChanged" />
+                    <Slider x:Name="FontSlider" Minimum="10" Maximum="96" Value="22" StepFrequency="1" ValueChanged="FontSlider_ValueChanged" />
                 </StackPanel>
+                <StackPanel x:Name="CropPanel" Spacing="8" Visibility="Collapsed">
+                    <TextBlock x:Name="CropInfo" FontFamily="{StaticResource MonoFont}" FontSize="12" />
+                    <Button Style="{StaticResource AccentButtonStyle}" Content="Apply crop" HorizontalAlignment="Stretch" Click="ApplyCrop_Click" ToolTipService.ToolTip="Enter" />
+                    <Button Content="Reset to full image" HorizontalAlignment="Stretch" Click="ResetCrop_Click" />
+                </StackPanel>
+                <Button x:Name="DeleteBtn" Visibility="Collapsed" HorizontalAlignment="Stretch" Click="Delete_Click" ToolTipService.ToolTip="Delete">
+                    <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center"><FontIcon Glyph="&#xE74D;" FontSize="14" /><TextBlock Text="Delete" /></StackPanel>
+                </Button>
+                <TextBlock x:Name="InspectorTip" TextWrapping="Wrap" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                 <TextBlock x:Name="SavedText" TextWrapping="Wrap" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
             </StackPanel>
         </Grid>

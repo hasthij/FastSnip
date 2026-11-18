@@ -52,6 +52,7 @@ struct Binding {
 
 static BINDINGS: OnceLock<Mutex<Vec<Binding>>> = OnceLock::new();
 static HELD: OnceLock<Mutex<HashSet<u32>>> = OnceLock::new();
+static LAST_DOWN: AtomicIsize = AtomicIsize::new(0);
 static TARGET: AtomicIsize = AtomicIsize::new(0);
 static HOOK_THREAD: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
@@ -178,8 +179,11 @@ pub fn start(target: HWND) {
                 Ordering::SeqCst,
             );
             let hmod = GetModuleHandleW(None).ok();
-            let hook =
-                SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), hmod.map(|m| m.into()), 0);
+            let install = || SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), hmod.map(|m| m.into()), 0);
+            let mut hook = install();
+            // Windows silently drops a low-level hook that ever answers too slowly
+            // (or after sleep/session changes). Re-install it regularly.
+            let timer = SetTimer(None, 0, 15_000, None);
             let mut registered = register_hotkeys();
             let mut msg = MSG::default();
             while GetMessageW(&mut msg, None, 0, 0).as_bool() {
@@ -194,9 +198,22 @@ pub fn start(target: HWND) {
                     }
                     continue;
                 }
+                if msg.hwnd.is_invalid() && msg.message == WM_TIMER && msg.wParam.0 == timer {
+                    let fresh = install();
+                    if let Ok(old) = std::mem::replace(&mut hook, fresh) {
+                        let _ = UnhookWindowsHookEx(old);
+                    }
+                    HELD.get_or_init(Default::default).lock().unwrap().clear();
+                    continue;
+                }
                 if msg.hwnd.is_invalid() && msg.message == WM_REREGISTER {
                     unregister_hotkeys(registered);
                     registered = register_hotkeys();
+                    let fresh = install();
+                    if let Ok(old) = std::mem::replace(&mut hook, fresh) {
+                        let _ = UnhookWindowsHookEx(old);
+                    }
+                    HELD.get_or_init(Default::default).lock().unwrap().clear();
                     continue;
                 }
                 let _ = TranslateMessage(&msg);
@@ -206,8 +223,19 @@ pub fn start(target: HWND) {
             if let Ok(h) = hook {
                 let _ = UnhookWindowsHookEx(h);
             }
+            let _ = KillTimer(None, timer);
         })
         .expect("hook thread");
+}
+
+/// Re-install the hook and system hotkeys (after sleep or unlock).
+pub fn reinstall() {
+    let id = HOOK_THREAD.load(Ordering::SeqCst);
+    if id != 0 {
+        unsafe {
+            let _ = PostThreadMessageW(id, WM_REREGISTER, WPARAM(0), LPARAM(0));
+        }
+    }
 }
 
 /// Remove the hook and end its thread.
@@ -286,7 +314,16 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                         .copied()
                 });
                 if let Some(b) = hit {
-                    let first = held.lock().unwrap().insert(vk);
+                    // A key-up we never saw (sleep, lock, hook swap) must not block the next press.
+                    let now = windows::Win32::System::SystemInformation::GetTickCount64() as isize;
+                    let stale = now - LAST_DOWN.swap(now, Ordering::Relaxed) > 700;
+                    let first = {
+                        let mut h = held.lock().unwrap();
+                        if stale {
+                            h.remove(&vk);
+                        }
+                        h.insert(vk)
+                    };
                     if first {
                         if b.mods & MOD_WIN != 0 {
                             send_dummy_key();
